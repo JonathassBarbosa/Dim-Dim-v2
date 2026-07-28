@@ -1,5 +1,10 @@
-const CACHE = 'dimdim-v10';
-const ASSETS = ['./', './index.html', './manifest.json', './icons/icon-192.png', './icons/icon-512.png', './icons/mark.png', './icons/mark-success.png', './icons/mark-error.png'];
+const CACHE = 'dimdim-v11';
+const ASSETS = [
+  './', './index.html', './manifest.json', './assets/app.css', './assets/dimdim-logo.svg',
+  './js/app.js', './js/api.js', './js/config.js', './js/dom.js', './js/storage.js',
+  './icons/icon-192.png', './icons/icon-512.png', './icons/mark.png',
+  './icons/mark-success.png', './icons/mark-error.png'
+];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -19,7 +24,7 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
-  if (url.hostname.includes('script.google.com')) return;
+  if (url.hostname.includes('script.google.com') || event.request.method !== 'GET') return;
 
   // navegação (index.html): sempre tenta a rede primeiro, cai pro cache só se offline
   if (event.request.mode === 'navigate') {
@@ -30,6 +35,6 @@ self.addEventListener('fetch', (event) => {
   }
 
   event.respondWith(
-    caches.match(event.request).then((cached) => cached || fetch(event.request).catch(() => cached))
+    caches.match(event.request).then((cached) => cached || fetch(event.request))
   );
 });
