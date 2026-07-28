@@ -1,352 +1,324 @@
 /**
- * DIMDIM — Backend (Google Apps Script)
- * -----------------------------------------------------------
- * Transforma sua Planilha Google em uma API HTTPS gratuita para o app dimdim.
- *
- * COMO IMPLANTAR:
- * 1. Na planilha: Extensões > Apps Script.
- * 2. Apague o conteúdo do Code.gs padrão e cole este arquivo inteiro.
- * 3. Rode a função "configurarPlanilhaInicial" uma vez (menu suspenso no topo > Executar).
- * 4. Implantar > Nova implantação > tipo "App da Web".
- *    Executar como: Eu. Quem pode acessar: Qualquer pessoa.
- * 5. Copie a URL (termina em /exec) e cole no app, na tela Registro.
- * 6. Ao editar este script, gere uma NOVA versão em "Gerenciar implantações" para valer.
+ * DIMDIM — Backend Google Apps Script
+ * Execute configurarPlanilhaInicial() uma vez e copie o token exibido no log.
+ * Implante como Web App: executar como você; acesso "Qualquer pessoa".
  */
 
-const SHEET_COMPRAS = 'Compras';
-const SHEET_CATEGORIAS = 'Categorias_Config';
-const SHEET_CUSTOS_APP = 'Custos_Fixos_App';
-const SHEET_PROVENTOS_APP = 'Proventos_App';
-const SHEET_CUSTOS_ORIGINAL = 'Planilha1';
-const SHEET_INVESTIMENTOS = 'Investimentos_App';
+const SHEETS = {
+  compras: 'Compras',
+  categorias: 'Categorias_Config',
+  custos: 'Custos_Fixos_App',
+  proventos: 'Proventos_App',
+  investimentos: 'Investimentos_App'
+};
+const TOKEN_PROPERTY = 'DIMDIM_API_TOKEN';
+const TIME_ZONE = 'America/Sao_Paulo';
 
-function _ss(){ return SpreadsheetApp.getActiveSpreadsheet(); }
-function _sheet(name){
-  const sh = _ss().getSheetByName(name);
-  if(!sh) throw new Error('Aba não encontrada: ' + name);
-  return sh;
+function _ss() { return SpreadsheetApp.getActiveSpreadsheet(); }
+function _sheet(name) {
+  const sheet = _ss().getSheetByName(name);
+  if (!sheet) throw new Error('Aba não encontrada: ' + name);
+  return sheet;
 }
-function _json(obj){
-  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+function _json(value) {
+  return ContentService.createTextOutput(JSON.stringify(value))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+function _safeCell(value) {
+  const text = String(value == null ? '' : value).trim().slice(0, 300);
+  return /^[=+\-@]/.test(text) ? "'" + text : text;
+}
+function _number(value, min, max) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0;
+  return Math.min(max == null ? 1e12 : max, Math.max(min == null ? 0 : min, number));
+}
+function _dateParts(value) {
+  const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  return { year: Number(match[1]), month: Number(match[2]), day: Number(match[3]) };
+}
+function _token() {
+  return PropertiesService.getScriptProperties().getProperty(TOKEN_PROPERTY) || '';
+}
+function _authorize(token) {
+  const expected = _token();
+  if (!expected || !token || String(token) !== expected) throw new Error('Acesso não autorizado.');
+}
+function _withLock(callback) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try { return callback(); } finally { lock.releaseLock(); }
 }
 
-/* ------------------------------------------------------------------ */
-/* GET                                                                 */
-/* ------------------------------------------------------------------ */
-function doGet(e){
-  try{
-    const action = e.parameter.action || 'summary';
-    if(action === 'categorias') return _json({ok:true, categorias:getCategorias()});
-    if(action === 'investimentos') return _json({ok:true, investimentos:getInvestimentos()});
-    if(action === 'summary'){
-      const mes = e.parameter.mes ? parseInt(e.parameter.mes,10) : (new Date().getMonth()+1);
-      return _json({ok:true, ...getResumoMensal(mes)});
+function doGet(e) {
+  try {
+    const params = (e && e.parameter) || {};
+    _authorize(params.token);
+    const action = params.action || 'painel';
+    if (action === 'config') return _json({ ok: true, ...getConfig() });
+    if (action === 'categorias') return _json({ ok: true, categorias: getCategorias() });
+    if (action === 'investimentos') return _json({ ok: true, investimentos: getInvestimentos() });
+    if (action === 'historico') return _json({ ok: true, compras: getHistorico(_number(params.limit, 1, 500) || 100) });
+    if (action === 'painel') return _json({ ok: true, ...getPainelPeriodo(params.periodo || 'mes') });
+    if (action === 'summary') {
+      const now = new Date();
+      const month = _number(params.mes, 1, 12) || now.getMonth() + 1;
+      const year = _number(params.ano, 2000, 2200) || now.getFullYear();
+      return _json({ ok: true, ...getResumoMensal(month, year) });
     }
-    if(action === 'painel'){
-      const periodo = e.parameter.periodo || 'mes';
-      return _json({ok:true, ...getPainelPeriodo(periodo)});
-    }
-    return _json({ok:false, error:'Ação desconhecida: ' + action});
-  }catch(err){
-    return _json({ok:false, error:String(err)});
+    throw new Error('Ação desconhecida: ' + action);
+  } catch (error) {
+    return _json({ ok: false, error: String(error.message || error) });
   }
 }
 
-/* ------------------------------------------------------------------ */
-/* POST                                                                */
-/* ------------------------------------------------------------------ */
-function doPost(e){
-  try{
+function doPost(e) {
+  try {
+    if (!e || !e.postData || !e.postData.contents) throw new Error('Corpo da requisição ausente.');
+    if (e.postData.contents.length > 500000) throw new Error('Requisição muito grande.');
     const body = JSON.parse(e.postData.contents);
-    const action = body.action || 'compra';
-
-    if(action === 'compra'){
-      registrarCompra(body);
-      const mesAtual = new Date().getMonth()+1;
-      return _json({ok:true, ...getResumoMensal(mesAtual)});
-    }
-    if(action === 'categorias'){
-      salvarCategorias(body.categorias || []);
-      return _json({ok:true});
-    }
-    if(action === 'custosFixos'){
-      salvarListaSimples(SHEET_CUSTOS_APP, body.itens || []);
-      return _json({ok:true});
-    }
-    if(action === 'proventos'){
-      salvarListaSimples(SHEET_PROVENTOS_APP, body.itens || []);
-      return _json({ok:true});
-    }
-    if(action === 'investimentos'){
-      salvarInvestimentos(body.itens || []);
-      return _json({ok:true});
-    }
-    if(action === 'atualizarTaxaInvestimento'){
-      atualizarTaxaInvestimento(body.nome, body.novaTaxa);
-      return _json({ok:true});
-    }
-    return _json({ok:false, error:'Ação desconhecida: ' + action});
-  }catch(err){
-    return _json({ok:false, error:String(err)});
+    _authorize(body.token);
+    const action = body.action;
+    const result = _withLock(function () {
+      if (action === 'compra') return registrarCompra(body);
+      if (action === 'atualizarCompra') return atualizarCompra(body);
+      if (action === 'excluirCompra') return excluirCompra(body.purchaseId);
+      if (action === 'salvarConfig') return salvarConfig(body);
+      if (action === 'categorias') return salvarCategorias(body.categorias || []);
+      if (action === 'custosFixos') return salvarListaSimples(SHEETS.custos, body.itens || []);
+      if (action === 'proventos') return salvarListaSimples(SHEETS.proventos, body.itens || []);
+      if (action === 'investimentos') return salvarInvestimentos(body.itens || []);
+      if (action === 'atualizarTaxaInvestimento') return atualizarTaxaInvestimento(body.nome, body.novaTaxa);
+      throw new Error('Ação desconhecida: ' + action);
+    });
+    return _json({ ok: true, ...(result || {}) });
+  } catch (error) {
+    return _json({ ok: false, error: String(error.message || error) });
   }
 }
 
-/* ------------------------------------------------------------------ */
-/* Registrar compra (lista, checkout ou nota fiscal)                   */
-/* ------------------------------------------------------------------ */
-function registrarCompra(payload){
-  const sh = _sheet(SHEET_COMPRAS);
-  const purchaseId = payload.purchaseId || Utilities.getUuid();
-  const data = payload.date || Utilities.formatDate(new Date(), 'GMT-3', 'yyyy-MM-dd');
-  const hora = payload.time || Utilities.formatDate(new Date(), 'GMT-3', 'HH:mm:ss');
-  const local = payload.location && payload.location.lat
-    ? `${payload.location.lat.toFixed(5)}, ${payload.location.lng.toFixed(5)}`
+function registrarCompra(payload) {
+  const sheet = _sheet(SHEETS.compras);
+  const items = Array.isArray(payload.items) ? payload.items.slice(0, 200) : [];
+  if (!items.length) throw new Error('A compra não possui itens.');
+  const purchaseId = _safeCell(payload.purchaseId || Utilities.getUuid());
+  const today = Utilities.formatDate(new Date(), TIME_ZONE, 'yyyy-MM-dd');
+  const timeNow = Utilities.formatDate(new Date(), TIME_ZONE, 'HH:mm:ss');
+  const date = _dateParts(payload.date) ? payload.date : today;
+  const time = /^\d{2}:\d{2}:\d{2}$/.test(payload.time || '') ? payload.time : timeNow;
+  const location = payload.location && Number.isFinite(Number(payload.location.lat))
+    ? `${_number(payload.location.lat, -90, 90).toFixed(5)}, ${_number(payload.location.lng, -180, 180).toFixed(5)}`
     : 'Não informado';
-  const formaPagamento = payload.paymentMethod || 'Não informado';
-
-  const categorias = getCategorias();
-  const grupoPorCategoria = {};
-  categorias.forEach(c => grupoPorCategoria[c.categoria] = c.grupo || 'Necessidade');
-
-  const items = payload.items || [];
-  items.forEach(function(item){
-    const qtd = Number(item.qty) || 1;
-    const precoUnit = Number(item.price) || 0;
-    const subtotal = qtd * precoUnit;
-    const naLista = item.inList !== false;
-    const categoria = item.category || 'Outros';
-    const grupo = grupoPorCategoria[categoria] || 'Necessidade';
-    sh.appendRow([
-      data, hora, local, purchaseId,
-      item.name || '(sem nome)', categoria,
-      qtd, precoUnit, subtotal, formaPagamento, naLista, grupo
-    ]);
+  const payment = _safeCell(payload.paymentMethod || 'Não informado');
+  const groupByCategory = {};
+  getCategorias().forEach(c => groupByCategory[c.categoria] = c.grupo);
+  const rows = items.map(item => {
+    const qty = _number(item.qty, 0.01, 10000) || 1;
+    const price = _number(item.price, 0, 1e9);
+    const category = _safeCell(item.category || 'Outros');
+    return [
+      date, time, location, purchaseId, _safeCell(item.name || '(sem nome)'), category,
+      qty, price, qty * price, payment, item.inList !== false,
+      groupByCategory[category] || 'Necessidade'
+    ];
   });
+  const firstRow = sheet.getLastRow() + 1;
+  sheet.getRange(firstRow, 1, rows.length, 12).setValues(rows);
+  rows.forEach((row, index) => {
+    if (!row[10]) sheet.getRange(firstRow + index, 1, 1, 12).setFontColor('#D6483B');
+  });
+  const parts = _dateParts(date);
+  return { purchaseId, ...getResumoMensal(parts.month, parts.year) };
+}
 
-  // destaca em vermelho as linhas de itens que vieram fora da lista
-  const lastRow = sh.getLastRow();
-  const numNovas = items.length;
-  for(let i=0; i<numNovas; i++){
-    const r = lastRow - numNovas + 1 + i;
-    const naLista = items[i].inList !== false;
-    const range = sh.getRange(r, 1, 1, 12);
-    if(!naLista){
-      range.setFontColor('#D6483B');
+function excluirCompra(purchaseId) {
+  const id = String(purchaseId || '');
+  if (!id) throw new Error('ID da compra ausente.');
+  const sheet = _sheet(SHEETS.compras);
+  const values = sheet.getDataRange().getValues();
+  const keep = values.slice(1).filter(row => String(row[3]) !== id);
+  if (keep.length === values.length - 1) throw new Error('Compra não encontrada.');
+  if (sheet.getLastRow() > 1) sheet.getRange(2, 1, sheet.getLastRow() - 1, 12).clearContent().setFontColor(null);
+  if (keep.length) {
+    sheet.getRange(2, 1, keep.length, 12).setValues(keep);
+    keep.forEach((row, index) => {
+      if (row[10] === false) sheet.getRange(index + 2, 1, 1, 12).setFontColor('#D6483B');
+    });
+  }
+  return {};
+}
+
+function atualizarCompra(payload) {
+  if (!Array.isArray(payload.items) || !payload.items.length) throw new Error('A compra não possui itens.');
+  const sheet = _sheet(SHEETS.compras);
+  const backup = sheet.getDataRange().getValues();
+  try {
+    excluirCompra(payload.purchaseId);
+    return registrarCompra(payload);
+  } catch (error) {
+    sheet.clearContents();
+    if (backup.length) sheet.getRange(1, 1, backup.length, backup[0].length).setValues(backup);
+    throw error;
+  }
+}
+
+function getHistorico(limit) {
+  const rows = _sheet(SHEETS.compras).getDataRange().getValues().slice(1);
+  const grouped = {};
+  rows.forEach(row => {
+    if (!row[3]) return;
+    const id = String(row[3]);
+    if (!grouped[id]) {
+      const date = row[0] instanceof Date ? Utilities.formatDate(row[0], TIME_ZONE, 'yyyy-MM-dd') : String(row[0]);
+      grouped[id] = { purchaseId: id, date, time: String(row[1] || ''), location: String(row[2] || ''), paymentMethod: String(row[9] || ''), total: 0, items: [] };
+    }
+    const item = { name: String(row[4] || ''), category: String(row[5] || ''), qty: Number(row[6]) || 0, price: Number(row[7]) || 0, subtotal: Number(row[8]) || 0, inList: row[10] !== false };
+    grouped[id].items.push(item);
+    grouped[id].total += item.subtotal;
+  });
+  return Object.values(grouped)
+    .sort((a, b) => `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`))
+    .slice(0, limit);
+}
+
+function getCategorias() {
+  return _sheet(SHEETS.categorias).getDataRange().getValues().slice(1)
+    .filter(row => row[0])
+    .map(row => {
+      const group = ['Necessidade', 'Desejo', 'Investimento'].includes(row[2]) ? row[2] : 'Necessidade';
+      return { categoria: String(row[0]), orcamento: Number(row[1]) || 0, grupo: group };
+    });
+}
+function getSimpleList(sheetName) {
+  return _sheet(sheetName).getDataRange().getValues().slice(1)
+    .filter(row => row[0])
+    .map(row => ({ n: String(row[0]), v: Number(row[1]) || 0 }));
+}
+function getInvestimentos() {
+  return _sheet(SHEETS.investimentos).getDataRange().getValues().slice(1)
+    .filter(row => row[0])
+    .map(row => ({ nome: String(row[0]), tipo: String(row[1] || ''), valor: Number(row[2]) || 0, taxa: Number(row[3]) || 0, atualizadoEm: String(row[4] || '') }));
+}
+function getConfig() {
+  return { categorias: getCategorias(), custosFixos: getSimpleList(SHEETS.custos), proventos: getSimpleList(SHEETS.proventos), investimentos: getInvestimentos() };
+}
+
+function _replaceRows(sheetName, header, rows) {
+  const sheet = _sheet(sheetName);
+  sheet.clearContents();
+  sheet.getRange(1, 1, 1, header.length).setValues([header]);
+  if (rows.length) sheet.getRange(2, 1, rows.length, header.length).setValues(rows);
+  sheet.setFrozenRows(1);
+}
+function salvarCategorias(items) {
+  const rows = (items || []).slice(0, 200).filter(item => item.n)
+    .map(item => [_safeCell(item.n), _number(item.v, 0, 1e12), ['Necessidade', 'Desejo', 'Investimento'].includes(item.g) ? item.g : 'Necessidade']);
+  _replaceRows(SHEETS.categorias, ['Categoria', 'Orçamento Mensal (R$)', 'Grupo (50-30-20)'], rows);
+}
+function salvarListaSimples(sheetName, items) {
+  const rows = (items || []).slice(0, 500).filter(item => item.n).map(item => [_safeCell(item.n), _number(item.v, 0, 1e12)]);
+  _replaceRows(sheetName, ['Nome', 'Valor Mensal (R$)'], rows);
+}
+function salvarInvestimentos(items) {
+  const today = Utilities.formatDate(new Date(), TIME_ZONE, 'yyyy-MM-dd');
+  const rows = (items || []).slice(0, 500).filter(item => item.nome)
+    .map(item => [_safeCell(item.nome), _safeCell(item.tipo), _number(item.valor, 0, 1e12), _number(item.taxa, -100, 1e6), item.atualizadoEm || today]);
+  _replaceRows(SHEETS.investimentos, ['Nome', 'Tipo', 'Valor Investido (R$)', 'Taxa Atual (% a.a.)', 'Última Atualização'], rows);
+}
+function salvarConfig(body) {
+  salvarCategorias(body.categorias || []);
+  salvarListaSimples(SHEETS.custos, body.custosFixos || []);
+  salvarListaSimples(SHEETS.proventos, body.proventos || []);
+  return {};
+}
+function atualizarTaxaInvestimento(name, rate) {
+  const sheet = _sheet(SHEETS.investimentos);
+  const values = sheet.getDataRange().getValues();
+  for (let index = 1; index < values.length; index++) {
+    if (String(values[index][0]) === String(name)) {
+      sheet.getRange(index + 1, 4, 1, 2).setValues([[_number(rate, -100, 1e6), Utilities.formatDate(new Date(), TIME_ZONE, 'yyyy-MM-dd')]]);
+      return {};
     }
   }
+  throw new Error('Investimento não encontrado.');
+}
+function somaListaSimples(sheetName) {
+  return getSimpleList(sheetName).reduce((sum, item) => sum + item.v, 0);
 }
 
-/* ------------------------------------------------------------------ */
-/* Categorias / grupos (para a regra 50-30-20)                         */
-/* ------------------------------------------------------------------ */
-function getCategorias(){
-  const sh = _sheet(SHEET_CATEGORIAS);
-  const values = sh.getDataRange().getValues();
-  const out = [];
-  for(let i=1; i<values.length; i++){
-    const [nome, orcamento, grupo] = values[i];
-    if(!nome) continue;
-    out.push({categoria:String(nome), orcamento:Number(orcamento)||0, grupo: grupo || 'Necessidade'});
-  }
-  return out;
-}
-
-function salvarCategorias(categorias){
-  const sh = _sheet(SHEET_CATEGORIAS);
-  sh.clearContents();
-  sh.appendRow(['Categoria', 'Orçamento Mensal (R$)', 'Grupo (50-30-20)']);
-  categorias.forEach(c => sh.appendRow([c.n, c.v, c.g || 'Necessidade']));
-}
-
-function salvarListaSimples(sheetName, itens){
-  const sh = _sheet(sheetName);
-  sh.clearContents();
-  sh.appendRow(['Nome', 'Valor Mensal (R$)']);
-  itens.forEach(i => sh.appendRow([i.n, i.v]));
-}
-
-/* ------------------------------------------------------------------ */
-/* Investimentos (nome, tipo, valor, taxa de rentabilidade)            */
-/* ------------------------------------------------------------------ */
-function getInvestimentos(){
-  try{
-    const sh = _sheet(SHEET_INVESTIMENTOS);
-    const values = sh.getDataRange().getValues();
-    const out = [];
-    for(let i=1; i<values.length; i++){
-      const [nome, tipo, valor, taxa, atualizadoEm] = values[i];
-      if(!nome) continue;
-      out.push({nome:String(nome), tipo:tipo||'', valor:Number(valor)||0, taxa:Number(taxa)||0, atualizadoEm: atualizadoEm||''});
-    }
-    return out;
-  }catch(e){ return []; }
-}
-function salvarInvestimentos(itens){
-  const sh = _sheet(SHEET_INVESTIMENTOS);
-  sh.clearContents();
-  sh.appendRow(['Nome','Tipo','Valor Investido (R$)','Taxa Atual (% a.a.)','Última Atualização']);
-  const hoje = Utilities.formatDate(new Date(), 'GMT-3', 'yyyy-MM-dd');
-  itens.forEach(i => sh.appendRow([i.nome, i.tipo||'', i.valor||0, i.taxa||0, i.atualizadoEm || hoje]));
-}
-function atualizarTaxaInvestimento(nome, novaTaxa){
-  const sh = _sheet(SHEET_INVESTIMENTOS);
-  const values = sh.getDataRange().getValues();
-  const hoje = Utilities.formatDate(new Date(), 'GMT-3', 'yyyy-MM-dd');
-  for(let i=1; i<values.length; i++){
-    if(String(values[i][0]) === String(nome)){
-      sh.getRange(i+1, 4).setValue(novaTaxa);
-      sh.getRange(i+1, 5).setValue(hoje);
-      return;
-    }
-  }
-}
-
-function somaListaSimples(sheetName){
-  try{
-    const sh = _sheet(sheetName);
-    const values = sh.getDataRange().getValues();
-    let total = 0;
-    for(let i=1; i<values.length; i++){ total += Number(values[i][1]) || 0; }
-    return total;
-  }catch(e){ return 0; }
-}
-
-/* ------------------------------------------------------------------ */
-/* Resumo mensal (usado no fluxo de alerta de orçamento por categoria) */
-/* ------------------------------------------------------------------ */
-function getResumoMensal(mesNumero){
-  const categorias = getCategorias();
-  const shCompras = _sheet(SHEET_COMPRAS);
-  const dados = shCompras.getDataRange().getValues();
-  const gastosPorCategoria = {};
-  categorias.forEach(c => gastosPorCategoria[c.categoria] = 0);
-
-  for(let i=1; i<dados.length; i++){
-    const row = dados[i];
-    const dataStr = row[0];
-    if(!dataStr) continue;
-    const d = (dataStr instanceof Date) ? dataStr : new Date(dataStr);
-    if(isNaN(d)) continue;
-    if((d.getMonth()+1) !== Number(mesNumero)) continue;
-    const categoria = row[5] || 'Outros';
-    const subtotal = Number(row[8]) || 0;
-    gastosPorCategoria[categoria] = (gastosPorCategoria[categoria]||0) + subtotal;
-  }
-
-  const categoriasResumo = categorias.map(c=>{
-    const gasto = gastosPorCategoria[c.categoria] || 0;
-    return {
-      categoria: c.categoria, orcamento: c.orcamento,
-      gasto: Math.round(gasto*100)/100,
-      excedido: c.orcamento>0 && gasto>c.orcamento
-    };
+function getResumoMensal(month, year) {
+  const categories = getCategorias();
+  const spent = {};
+  categories.forEach(category => spent[category.categoria] = 0);
+  _sheet(SHEETS.compras).getDataRange().getValues().slice(1).forEach(row => {
+    const parts = row[0] instanceof Date
+      ? _dateParts(Utilities.formatDate(row[0], TIME_ZONE, 'yyyy-MM-dd'))
+      : _dateParts(row[0]);
+    if (!parts || parts.month !== Number(month) || parts.year !== Number(year)) return;
+    const category = row[5] || 'Outros';
+    spent[category] = (spent[category] || 0) + (Number(row[8]) || 0);
   });
-
-  const alertas = categoriasResumo.filter(c=>c.excedido);
-  return { categorias: categoriasResumo, alertas };
+  const summary = categories.map(category => {
+    const value = spent[category.categoria] || 0;
+    return { categoria: category.categoria, orcamento: category.orcamento, gasto: Math.round(value * 100) / 100, excedido: category.orcamento > 0 && value > category.orcamento };
+  });
+  return { categorias: summary, alertas: summary.filter(item => item.excedido) };
 }
 
-/* ------------------------------------------------------------------ */
-/* Painel por período com a regra 50-30-20                             */
-/* ------------------------------------------------------------------ */
-function getPainelPeriodo(periodo){
-  const categorias = getCategorias();
-  const hoje = new Date();
-
-  const receitaMensal = somaListaSimples(SHEET_PROVENTOS_APP);
-  const custosFixosMensal = somaListaSimples(SHEET_CUSTOS_APP);
-  let receita = receitaMensal;
-  let custosFixos = custosFixosMensal;
-  if(periodo === 'dia'){ receita = receitaMensal / 30; custosFixos = custosFixosMensal / 30; }
-  if(periodo === 'ano'){ receita = receitaMensal * 12; custosFixos = custosFixosMensal * 12; }
-
-  const shCompras = _sheet(SHEET_COMPRAS);
-  const dados = shCompras.getDataRange().getValues();
-  const gastosPorCategoria = {};
-  categorias.forEach(c => gastosPorCategoria[c.categoria] = 0);
-
-  for(let i=1; i<dados.length; i++){
-    const row = dados[i];
-    const dataStr = row[0];
-    if(!dataStr) continue;
-    const d = (dataStr instanceof Date) ? dataStr : new Date(dataStr);
-    if(isNaN(d)) continue;
-
-    let dentroPeriodo = false;
-    if(periodo === 'dia') dentroPeriodo = d.toDateString() === hoje.toDateString();
-    else if(periodo === 'ano') dentroPeriodo = d.getFullYear() === hoje.getFullYear();
-    else dentroPeriodo = (d.getMonth()+1) === (hoje.getMonth()+1) && d.getFullYear() === hoje.getFullYear();
-    if(!dentroPeriodo) continue;
-
-    const categoria = row[5] || 'Outros';
-    const subtotal = Number(row[8]) || 0;
-    gastosPorCategoria[categoria] = (gastosPorCategoria[categoria]||0) + subtotal;
-  }
-
-  // Custos fixos (aluguel, energia, internet...) contam como Necessidade, junto com as compras variáveis dessa categoria.
-  const grupos = {Necessidade:0, Desejo:0, Investimento:0};
-  categorias.forEach(c=>{
-    const g = c.grupo || 'Necessidade';
-    grupos[g] = (grupos[g]||0) + (gastosPorCategoria[c.categoria]||0);
+function getPainelPeriodo(period) {
+  if (!['dia', 'mes', 'ano'].includes(period)) period = 'mes';
+  const now = new Date();
+  const today = Utilities.formatDate(now, TIME_ZONE, 'yyyy-MM-dd');
+  const todayParts = _dateParts(today);
+  const monthlyIncome = somaListaSimples(SHEETS.proventos);
+  const monthlyFixed = somaListaSimples(SHEETS.custos);
+  const factor = period === 'dia' ? 1 / 30 : (period === 'ano' ? 12 : 1);
+  const income = monthlyIncome * factor;
+  const fixed = monthlyFixed * factor;
+  const spentByCategory = {};
+  _sheet(SHEETS.compras).getDataRange().getValues().slice(1).forEach(row => {
+    const value = row[0] instanceof Date ? Utilities.formatDate(row[0], TIME_ZONE, 'yyyy-MM-dd') : String(row[0]);
+    const parts = _dateParts(value);
+    if (!parts) return;
+    const inside = period === 'dia' ? value === today : period === 'ano' ? parts.year === todayParts.year : parts.year === todayParts.year && parts.month === todayParts.month;
+    if (inside) spentByCategory[row[5] || 'Outros'] = (spentByCategory[row[5] || 'Outros'] || 0) + (Number(row[8]) || 0);
   });
-  grupos.Necessidade += custosFixos;
-
-  const metas = { Necessidade: receita*0.5, Desejo: receita*0.3, Investimento: receita*0.2 };
-  const gruposArr = Object.keys(grupos).map(g=>({grupo:g, gasto:Math.round(grupos[g]*100)/100, meta:Math.round(metas[g]*100)/100}));
-
-  const gastoTotal = Object.values(grupos).reduce((s,v)=>s+v,0);
-  const saldoLivre = Math.round((receita - gastoTotal)*100)/100;
-
-  const resumoCategorias = getResumoMensal(hoje.getMonth()+1);
-
+  const groups = { Necessidade: fixed, Desejo: 0, Investimento: 0 };
+  getCategorias().forEach(category => groups[category.grupo || 'Necessidade'] += spentByCategory[category.categoria] || 0);
+  const rates = { Necessidade: 0.5, Desejo: 0.3, Investimento: 0.2 };
+  const groupList = Object.keys(groups).map(group => ({ grupo: group, gasto: Math.round(groups[group] * 100) / 100, meta: Math.round(income * rates[group] * 100) / 100 }));
+  const total = groupList.reduce((sum, group) => sum + group.gasto, 0);
   return {
-    periodo, receita: Math.round(receita*100)/100, gastoTotal: Math.round(gastoTotal*100)/100,
-    custosFixos: Math.round(custosFixos*100)/100,
-    saldoLivre, grupos: gruposArr, alertas: resumoCategorias.alertas
+    periodo: period, receita: Math.round(income * 100) / 100, gastoTotal: Math.round(total * 100) / 100,
+    custosFixos: Math.round(fixed * 100) / 100, saldoLivre: Math.round((income - total) * 100) / 100,
+    grupos: groupList, alertas: getResumoMensal(todayParts.month, todayParts.year).alertas
   };
 }
 
-/* ------------------------------------------------------------------ */
-/* Configuração inicial (rodar uma vez pelo editor do Apps Script)     */
-/* ------------------------------------------------------------------ */
-function configurarPlanilhaInicial(){
+function configurarPlanilhaInicial() {
   const ss = _ss();
+  const definitions = [
+    [SHEETS.compras, ['Data', 'Hora', 'Localização', 'ID Compra', 'Item', 'Categoria', 'Qtd', 'Preço Unit.', 'Subtotal', 'Forma Pagamento', 'Na Lista', 'Grupo (50-30-20)']],
+    [SHEETS.categorias, ['Categoria', 'Orçamento Mensal (R$)', 'Grupo (50-30-20)']],
+    [SHEETS.custos, ['Nome', 'Valor Mensal (R$)']],
+    [SHEETS.proventos, ['Nome', 'Valor Mensal (R$)']],
+    [SHEETS.investimentos, ['Nome', 'Tipo', 'Valor Investido (R$)', 'Taxa Atual (% a.a.)', 'Última Atualização']]
+  ];
+  definitions.forEach(definition => {
+    if (!ss.getSheetByName(definition[0])) {
+      const sheet = ss.insertSheet(definition[0]);
+      sheet.appendRow(definition[1]);
+      sheet.setFrozenRows(1);
+    }
+  });
+  if (!_token()) PropertiesService.getScriptProperties().setProperty(TOKEN_PROPERTY, Utilities.getUuid() + Utilities.getUuid());
+  Logger.log('TOKEN DIMDIM: ' + _token());
+  return _token();
+}
 
-  if(!ss.getSheetByName(SHEET_COMPRAS)){
-    const sh = ss.insertSheet(SHEET_COMPRAS);
-    sh.appendRow(['Data','Hora','Localização','ID Compra','Item','Categoria','Qtd','Preço Unit.','Subtotal','Forma Pagamento','Na Lista','Grupo (50-30-20)']);
-    sh.setFrozenRows(1);
-  }
-
-  if(!ss.getSheetByName(SHEET_CATEGORIAS)){
-    const sh = ss.insertSheet(SHEET_CATEGORIAS);
-    sh.appendRow(['Categoria','Orçamento Mensal (R$)','Grupo (50-30-20)']);
-    const defaults = [
-      ['Alimentação', 800, 'Necessidade'], ['Transporte', 200, 'Necessidade'],
-      ['Contas Fixas', 1900, 'Necessidade'], ['Assinaturas', 100, 'Desejo'],
-      ['Lazer', 150, 'Desejo'], ['Saúde', 150, 'Necessidade'],
-      ['Vestuário', 100, 'Desejo'], ['Cartão de Crédito', 500, 'Desejo'],
-      ['Outros', 100, 'Desejo']
-    ];
-    defaults.forEach(r => sh.appendRow(r));
-    sh.setFrozenRows(1);
-  }
-
-  if(!ss.getSheetByName(SHEET_CUSTOS_APP)){
-    const sh = ss.insertSheet(SHEET_CUSTOS_APP);
-    sh.appendRow(['Nome','Valor Mensal (R$)']);
-    sh.setFrozenRows(1);
-  }
-
-  if(!ss.getSheetByName(SHEET_PROVENTOS_APP)){
-    const sh = ss.insertSheet(SHEET_PROVENTOS_APP);
-    sh.appendRow(['Nome','Valor Mensal (R$)']);
-    sh.setFrozenRows(1);
-  }
-
-  if(!ss.getSheetByName(SHEET_INVESTIMENTOS)){
-    const sh = ss.insertSheet(SHEET_INVESTIMENTOS);
-    sh.appendRow(['Nome','Tipo','Valor Investido (R$)','Taxa Atual (% a.a.)','Última Atualização']);
-    sh.setFrozenRows(1);
-  }
+function mostrarTokenAcesso() {
+  if (!_token()) throw new Error('Execute configurarPlanilhaInicial primeiro.');
+  Logger.log('TOKEN DIMDIM: ' + _token());
+  return _token();
 }
