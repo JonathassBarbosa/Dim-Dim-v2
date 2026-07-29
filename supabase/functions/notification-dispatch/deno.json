@@ -1,0 +1,6 @@
+{
+  "imports": {
+    "@pushforge/builder": "npm:@pushforge/builder@2.0.5",
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2"
+  }
+}
