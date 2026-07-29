@@ -1,5 +1,18 @@
 const SESSION_KEY = 'dd_supabase_session';
 
+export function apiErrorMessage(data, status) {
+  const candidates = [
+    data?.msg,
+    data?.message,
+    data?.error_description,
+    typeof data?.error === 'string' ? data.error : data?.error?.message,
+    data?.details,
+    data?.hint
+  ];
+  return candidates.find(value => typeof value === 'string' && value.trim())
+    || `Falha no servidor (HTTP ${status}).`;
+}
+
 function saoPauloParts(value) {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/Sao_Paulo',
@@ -67,6 +80,25 @@ export class DimDimApi {
     if (action === 'config') return this.#getConfig();
     if (action === 'historico') return this.#getHistory(params.limit);
     if (action === 'painel') return this.#getDashboard(params.periodo);
+    if (action === 'resumoFinanceiro') {
+      return this.#request('/rest/v1/rpc/financial_summary', {
+        method: 'POST',
+        body: {}
+      });
+    }
+    if (action === 'notificacoes') {
+      const limit = Math.min(Number(params.limit) || 50, 100);
+      const notifications = await this.#table('notifications', {
+        query: `select=id,type,title,body,severity,data,read_at,created_at&order=created_at.desc&limit=${limit}`
+      });
+      return { ok: true, notifications };
+    }
+    if (action === 'preferenciasNotificacao') {
+      const rows = await this.#table('notification_preferences', {
+        query: 'select=in_app_enabled,push_enabled,daily_tip_enabled,low_balance_enabled,budget_alert_enabled,bill_due_enabled,daily_tip_time,low_balance_threshold,timezone&limit=1'
+      });
+      return { ok: true, preferences: rows[0] || null };
+    }
     if (action === 'lista') {
       const items = await this.#table('shopping_list_items', {
         query: 'select=id,name,expected_price,checked,times_used,categories(name)&order=position.asc,created_at.asc'
@@ -91,6 +123,22 @@ export class DimDimApi {
         }))
       };
     }
+    if (action === 'metas') {
+      const metas = await this.#table('financial_goals', {
+        query: 'select=id,name,target_amount,current_amount,monthly_contribution,target_date&active=eq.true&order=created_at'
+      });
+      return {
+        ok: true,
+        metas: metas.map(goal => ({
+          id: goal.id,
+          nome: goal.name,
+          objetivo: Number(goal.target_amount),
+          atual: Number(goal.current_amount),
+          mensal: Number(goal.monthly_contribution),
+          data: goal.target_date
+        }))
+      };
+    }
     throw new Error(`Ação desconhecida: ${action}`);
   }
 
@@ -103,9 +151,83 @@ export class DimDimApi {
     if (action === 'proventos') return this.#replaceSimple('income_sources', payload.itens);
     if (action === 'custosFixos') return this.#replaceSimple('recurring_expenses', payload.itens);
     if (action === 'investimentos') return this.#replaceInvestments(payload.itens);
+    if (action === 'metas') return this.#replaceGoals(payload.itens);
     if (action === 'salvarLista') return this.#replaceShoppingList(payload.items);
     if (action === 'gemini') {
       return this.#request('/functions/v1/gemini', { method: 'POST', body: payload });
+    }
+    if (action === 'gerarNotificacoes') {
+      return this.#request('/rest/v1/rpc/generate_financial_notifications', {
+        method: 'POST',
+        body: {}
+      });
+    }
+    if (action === 'salvarPreferenciasNotificacao') {
+      const body = {
+        user_id: this.session.user.id,
+        in_app_enabled: payload.inAppEnabled !== false,
+        push_enabled: Boolean(payload.pushEnabled),
+        daily_tip_enabled: payload.dailyTipEnabled !== false,
+        low_balance_enabled: payload.lowBalanceEnabled !== false,
+        budget_alert_enabled: payload.budgetAlertEnabled !== false,
+        bill_due_enabled: payload.billDueEnabled !== false,
+        daily_tip_time: payload.dailyTipTime || '08:00',
+        low_balance_threshold: Math.max(Number(payload.lowBalanceThreshold) || 0, 0),
+        timezone: 'America/Sao_Paulo'
+      };
+      await this.#table('notification_preferences', {
+        method: 'POST',
+        query: 'on_conflict=user_id',
+        prefer: 'resolution=merge-duplicates,return=representation',
+        body
+      });
+      return { ok: true };
+    }
+    if (action === 'salvarPush') {
+      const subscription = payload.subscription || {};
+      const keys = subscription.keys || {};
+      if (!subscription.endpoint || !keys.p256dh || !keys.auth) {
+        throw new Error('Inscrição de push inválida.');
+      }
+      await this.#table('push_subscriptions', {
+        method: 'POST',
+        query: 'on_conflict=user_id,endpoint',
+        prefer: 'resolution=merge-duplicates,return=representation',
+        body: {
+          user_id: this.session.user.id,
+          endpoint: subscription.endpoint,
+          p256dh: keys.p256dh,
+          auth: keys.auth,
+          user_agent: navigator.userAgent.slice(0, 500),
+          active: true,
+          last_error: null
+        }
+      });
+      return { ok: true };
+    }
+    if (action === 'removerPush') {
+      await this.#table('push_subscriptions', {
+        method: 'PATCH',
+        query: `endpoint=eq.${encodeURIComponent(payload.endpoint)}`,
+        body: { active: false }
+      });
+      return { ok: true };
+    }
+    if (action === 'lerNotificacao') {
+      await this.#table('notifications', {
+        method: 'PATCH',
+        query: `id=eq.${encodeURIComponent(payload.id)}`,
+        body: { read_at: new Date().toISOString() }
+      });
+      return { ok: true };
+    }
+    if (action === 'lerTodasNotificacoes') {
+      await this.#table('notifications', {
+        method: 'PATCH',
+        query: 'read_at=is.null',
+        body: { read_at: new Date().toISOString() }
+      });
+      return { ok: true };
     }
     throw new Error(`Ação desconhecida: ${action}`);
   }
@@ -289,6 +411,25 @@ export class DimDimApi {
     return { ok: true };
   }
 
+  async #replaceGoals(items = []) {
+    await this.#table('financial_goals', { method: 'DELETE', query: 'id=not.is.null' });
+    if (items.length) {
+      await this.#table('financial_goals', {
+        method: 'POST',
+        body: items.map(item => ({
+          user_id: this.session.user.id,
+          name: item.nome,
+          target_amount: Math.max(Number(item.objetivo) || 0, 0.01),
+          current_amount: Math.max(Number(item.atual) || 0, 0),
+          monthly_contribution: Math.max(Number(item.mensal) || 0, 0),
+          target_date: item.data || null,
+          active: true
+        }))
+      });
+    }
+    return { ok: true };
+  }
+
   async #replaceShoppingList(items = []) {
     const categories = await this.#table('categories', { query: 'select=id,name' });
     const byName = new Map(categories.map(c => [c.name.toLocaleLowerCase('pt-BR'), c.id]));
@@ -333,7 +474,7 @@ export class DimDimApi {
     });
     if (response.status === 204) return { ok: true };
     const data = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(data?.msg || data?.message || data?.error_description || data?.error || `Falha no servidor (HTTP ${response.status}).`);
+    if (!response.ok) throw new Error(apiErrorMessage(data, response.status));
     return data;
   }
 
