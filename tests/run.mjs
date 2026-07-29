@@ -17,6 +17,8 @@ const frontend = [
 assert.doesNotMatch(frontend, /(?:AIza|AQ\.)[A-Za-z0-9._-]{20,}/, 'O frontend não pode conter chave de API.');
 assert.doesNotMatch(frontend, /generativelanguage\.googleapis\.com/, 'O frontend não deve chamar o Gemini diretamente.');
 assert.doesNotMatch(frontend, /script\.google\.com/, 'O frontend não deve depender do Apps Script.');
+assert.doesNotMatch(frontend, /@mlc-ai\/web-llm/, 'O frontend não deve baixar um modelo local pesado.');
+assert.doesNotMatch(frontend, /Baixando modelo local/, 'O assistente deve usar o backend Gemini.');
 const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]);
 assert.equal(new Set(ids).size, ids.length, 'O HTML não pode ter IDs duplicados.');
 

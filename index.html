@@ -14,16 +14,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-<script type="module">
-  try{
-    const webllm = await import("https://esm.run/@mlc-ai/web-llm");
-    window.WebLLM = webllm;
-    window.WebLLM_carregou = true;
-  }catch(e){
-    console.error('DimDim: não consegui carregar o WebLLM (motor de IA local). O app vai usar só a nuvem.', e);
-    window.WebLLM_carregou = false;
-  }
-</script>
 <link rel="stylesheet" href="assets/app.css">
 </head>
 <body>

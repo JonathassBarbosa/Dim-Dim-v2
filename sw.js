@@ -1,4 +1,4 @@
-const CACHE = 'dimdim-v13-supabase';
+const CACHE = 'dimdim-v14-gemini-cloud';
 const ASSETS = [
   './', './index.html', './manifest.json', './assets/app.css', './assets/dimdim-logo.svg',
   './js/app.js', './js/api.js', './js/config.js', './js/dom.js', './js/storage.js',
