@@ -1,0 +1,479 @@
+import { DEFAULT_AI_KEY, GEMINI_MODEL, GROUPS as GRUPOS, STORAGE_KEYS as LS } from './config.js';
+import { loadJSON, saveJSON } from './storage.js';
+import { DimDimApi } from './api.js';
+import { escapeHTML, localDateTime } from './dom.js';
+
+let SCRIPT_URL = loadJSON(LS.scriptUrl, '');
+let API_TOKEN = loadJSON(LS.apiToken, '');
+const api = new DimDimApi(SCRIPT_URL, API_TOKEN);
+let catalog=loadJSON(LS.catalog,[]),lastLocation=null,selectedPayment=null,saldoVisivel=loadJSON(LS.saldoVisivel,true),lastHeroData=null;
+let investimentos=[];
+let aiMessages=[];
+let aiVoiceOn=loadJSON(LS.aiVoice, false);
+let aiApiKey = loadJSON(LS.aiKey, '') || DEFAULT_AI_KEY;
+let cats=[];
+let custos=[];
+let proventos=[];
+function uid(){return globalThis.crypto?.randomUUID?.() || ('i'+Math.random().toString(36).slice(2,10));}
+function money(n){return'R$ '+(Number(n)||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});}
+function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2400);}
+setTimeout(()=>{document.getElementById('splash').classList.add('fade');},3300);
+setTimeout(()=>{document.getElementById('splash').style.display='none';},3900);
+document.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=>go(b.dataset.go)));
+const MAIS_SCREENS = ['lista','ocr'];
+function go(id){
+  document.querySelectorAll('.scr').forEach(s=>s.classList.remove('active'));
+  document.getElementById('s-'+id).classList.add('active');
+  const tabId = MAIS_SCREENS.includes(id) ? 'mais' : id;
+  document.querySelectorAll('.tabbtn[data-go]').forEach(t=>t.classList.toggle('active',t.dataset.go===tabId));
+  document.getElementById('btnMais').classList.toggle('active', tabId==='mais');
+  if(id==='home')refreshHero();
+  if(id==='hist')loadHistory();
+  if(id==='painel')loadPainel();
+}
+function openMais(){document.getElementById('maisOverlay').classList.add('open');}
+function closeMais(){document.getElementById('maisOverlay').classList.remove('open');}
+document.getElementById('btnMais').addEventListener('click',openMais);
+document.getElementById('btnCloseMais').addEventListener('click',closeMais);
+document.querySelectorAll('.mais-opt').forEach(b=>b.addEventListener('click',closeMais));
+async function openRegistro(){document.getElementById('registroOverlay').classList.add('open');await testConnection();renderRegistro();}
+function closeRegistro(){document.getElementById('registroOverlay').classList.remove('open');}
+document.getElementById('btnOpenRegistro').addEventListener('click',openRegistro);
+document.getElementById('btnCloseRegistro').addEventListener('click',closeRegistro);
+function applyHealthTheme(status){
+  document.documentElement.classList.remove('health-warn','health-bad');
+  if(status==='warn') document.documentElement.classList.add('health-warn');
+  if(status==='bad') document.documentElement.classList.add('health-bad');
+}
+function calcHealth(data){
+  if(data.saldoLivre < 0) return 'bad';
+  if(data.receita > 0 && (data.saldoLivre/data.receita) < 0.12) return 'warn';
+  return 'good';
+}
+function renderHero(data){
+  const val=document.getElementById('heroSaldo');
+  val.textContent=saldoVisivel?money(data.saldoLivre):'R$ ••••••';
+  document.getElementById('heroSub').textContent=`Receita ${money(data.receita)} · Gastos ${money(data.gastoTotal)}`;
+  lastHeroData=data;
+
+  const status = calcHealth(data);
+  applyHealthTheme(status);
+  const icon = document.getElementById('insightIcon');
+  const insight=document.getElementById('insightText');
+
+  if(status==='bad'){
+    icon.textContent='🚨';
+    insight.textContent=`Seu saldo livre está negativo (${money(data.saldoLivre)}). Hora de rever os gastos do mês.`;
+    return;
+  }
+  if(status==='warn'){
+    icon.textContent='⚠️';
+    insight.textContent=`Seu saldo livre está no limite (${money(data.saldoLivre)}). Fique de olho nos próximos gastos.`;
+    return;
+  }
+  icon.textContent='✅';
+  if(data.grupos&&data.grupos.length){
+    const pior=data.grupos.reduce((a,b)=>{const ra=a.meta>0?a.gasto/a.meta:0,rb=b.meta>0?b.gasto/b.meta:0;return rb>ra?b:a;});
+    const pct=pior.meta>0?Math.round((pior.gasto/pior.meta)*100):0;
+    if(pct>=100){icon.textContent='⚠️';insight.textContent=`Atenção: o grupo ${pior.grupo} já passou da meta do mês (${pct}%).`;}
+    else if(pct>=70) insight.textContent=`Você já usou ${pct}% da meta de ${pior.grupo} este mês.`;
+    else insight.textContent='Suas finanças estão saudáveis este mês.';
+  } else{
+    insight.textContent='Configure a planilha em Registro para ver seus dados reais.';
+  }
+}
+async function refreshHero(){try{renderHero(await api.get('painel',{periodo:'mes'}));}catch(e){renderHero({receita:0,gastoTotal:0,saldoLivre:0,grupos:[]});}}
+document.getElementById('btnToggleSaldo').addEventListener('click',()=>{saldoVisivel=!saldoVisivel;saveJSON(LS.saldoVisivel,saldoVisivel);if(lastHeroData)renderHero(lastHeroData);});
+document.getElementById('btnAdd').addEventListener('click',()=>{const raw=document.getElementById('paste').value.trim();if(!raw){toast('Cole ou digite algum item primeiro.');return;}raw.split('\n').map(l=>l.trim()).filter(Boolean).forEach(line=>{const separator=line.includes(';')?';':',';const parts=line.split(separator).map(p=>p.trim());const name=parts[0];if(!name)return;const category=parts[1]||'Outros';const priceText=separator===','&&parts.length>3?parts.slice(2).join('.'):parts[2];let price=priceText?parseFloat(priceText.replace(',','.')):0;if(isNaN(price))price=0;const existing=catalog.find(i=>i.name.toLowerCase()===name.toLowerCase());if(existing){existing.checked=true;existing.category=category;if(price)existing.price=price;}else{catalog.push({id:uid(),name,category,price,checked:true,timesUsed:0});}});document.getElementById('paste').value='';saveJSON(LS.catalog,catalog);renderCatalog();toast('Item adicionado.');});
+function renderCatalog(){const box=document.getElementById('catalog');box.innerHTML='';if(catalog.length===0){box.innerHTML='<div class="empty">Sua lista está vazia. Adicione itens acima.</div>';return;}catalog.forEach(item=>{const row=document.createElement('div');row.className='row'+(item.checked?' on':'');row.innerHTML=`<button class="chk" type="button" aria-label="Marcar ${escapeHTML(item.name)}">${item.checked?'✓':''}</button><div class="r-name">${escapeHTML(item.name)}<div class="r-meta">${escapeHTML(item.category)}${item.timesUsed>0?' · comprado '+item.timesUsed+'x':''}</div></div><div class="r-price">${money(item.price)}</div><button class="item-edit" type="button" aria-label="Editar">✎</button><button class="item-delete" type="button" aria-label="Excluir">✕</button>`;row.querySelector('.chk').addEventListener('click',()=>{item.checked=!item.checked;saveJSON(LS.catalog,catalog);renderCatalog();});row.querySelector('.item-edit').addEventListener('click',()=>editCatalogItem(item));row.querySelector('.item-delete').addEventListener('click',()=>{if(confirm(`Excluir ${item.name}?`)){catalog=catalog.filter(current=>current.id!==item.id);saveJSON(LS.catalog,catalog);renderCatalog();}});box.appendChild(row);});}
+function editCatalogItem(item){const name=prompt('Nome do item:',item.name);if(name===null||!name.trim())return;const category=prompt('Categoria:',item.category);if(category===null)return;const price=prompt('Preço:',String(item.price).replace('.',','));if(price===null)return;item.name=name.trim();item.category=category.trim()||'Outros';item.price=Number(String(price).replace(',','.'))||0;saveJSON(LS.catalog,catalog);renderCatalog();}
+renderCatalog();
+document.getElementById('fileInput').addEventListener('change',async(e)=>{const file=e.target.files[0];if(!file)return;const progress=document.getElementById('ocrProgress');const label=document.getElementById('ocrDropLabel');label.textContent='Lendo a nota...';progress.innerHTML='<div class="empty">Isso pode levar alguns segundos.</div>';try{const {data:{text}}=await Tesseract.recognize(file,'por');label.textContent='Fotografar ou enviar outra nota';progress.innerHTML='';processarTextoNota(text);}catch(err){progress.innerHTML='<div class="warn">Não consegui ler essa imagem. Tente uma foto mais nítida.</div>';label.textContent='Fotografe a nota ou escolha um arquivo';}});
+function processarTextoNota(text){const linhas=text.split('\n').map(l=>l.trim()).filter(Boolean);const itens=[];const regexPreco=/(\d{1,4}[.,]\d{2})\s*$/;linhas.forEach(linha=>{const m=linha.match(regexPreco);if(!m)return;const preco=parseFloat(m[1].replace(',','.'));let nome=linha.slice(0,m.index).trim();let qtd=1;const qm=nome.match(/^(\d+)\s*[xX]?\s+/);if(qm){qtd=parseInt(qm[1],10);nome=nome.slice(qm[0].length).trim();}nome=nome.replace(/^\d+\s*/,'').trim();if(nome.length<2)return;itens.push({name:nome,qty:qtd,price:preco});});renderOcrResult(itens);}
+function renderOcrResult(itens){const box=document.getElementById('ocrResult');if(itens.length===0){box.innerHTML='<div class="warn">Não encontrei itens com valores nessa imagem. Você pode ajustar manualmente ou tentar outra foto.</div>';return;}const selecionados=catalog.filter(c=>c.checked);const naoVieram=selecionados.filter(c=>!itens.some(i=>i.name.toLowerCase().includes(c.name.toLowerCase())||c.name.toLowerCase().includes(i.name.toLowerCase())));let html='<div class="seclabel">Itens reconhecidos — revise antes de confirmar</div>';itens.forEach(it=>{const estavaNaLista=selecionados.some(c=>c.name.toLowerCase().includes(it.name.toLowerCase())||it.name.toLowerCase().includes(c.name.toLowerCase()));it.inList=estavaNaLista;html+=`<div class="row"><div class="r-name${estavaNaLista?'':' off'}">${it.qty}x ${escapeHTML(it.name)}${estavaNaLista?'':' · fora da lista'}</div><div class="r-price">${money(it.qty*it.price)}</div></div>`;});if(naoVieram.length>0){html+=`<div class="warn">Da sua lista, não veio na nota: ${naoVieram.map(f=>escapeHTML(f.name)).join(', ')}</div>`;}html+='<div class="pay-grid" id="ocrPayGrid"><button class="pay-opt" data-p="Pix">Pix</button><button class="pay-opt" data-p="Débito">Débito</button><button class="pay-opt" data-p="Crédito">Crédito</button></div>';html+='<button class="btn" id="btnConfirmOcr" style="margin-top:10px">Confirmar e registrar</button>';box.innerHTML=html;let payOcr=null;box.querySelectorAll('#ocrPayGrid .pay-opt').forEach(o=>o.addEventListener('click',()=>{box.querySelectorAll('#ocrPayGrid .pay-opt').forEach(x=>x.classList.remove('active'));o.classList.add('active');payOcr=o.dataset.p;}));document.getElementById('btnConfirmOcr').addEventListener('click',async()=>{if(!payOcr){toast('Escolha a forma de pagamento.');return;}const saved=await enviarCompra(itens,payOcr);if(!saved)return;catalog.forEach(c=>c.checked=false);saveJSON(LS.catalog,catalog);toast('Compra da nota fiscal registrada.');go('hist');});
+}
+function setBotState(state, revertAfter){
+  const fab=document.getElementById('botFab'), head=document.getElementById('botHead');
+  if(fab) fab.dataset.state = state;
+  if(head) head.dataset.state = state;
+  if(revertAfter){ setTimeout(()=>{ if(fab)fab.dataset.state='idle'; if(head)head.dataset.state='idle'; }, revertAfter); }
+}
+function setBotThinking(on){
+  const fabOuter=document.getElementById('botFabOuter'), headOuter=document.getElementById('botHeadOuter');
+  if(fabOuter) fabOuter.classList.toggle('fast', on);
+  if(headOuter) headOuter.classList.toggle('fast', on);
+  setBotState(on ? 'thinking' : 'idle');
+}
+async function enviarCompra(items,paymentMethod){const now=localDateTime();const payload={purchaseId:uid(),date:now.date,time:now.time,location:lastLocation,paymentMethod,items:items.map(i=>({name:i.name,category:i.category||'Outros',qty:i.qty||1,price:i.price||0,inList:i.inList!==false}))};try{const data=await api.post('compra',payload);if(data.alertas?.length){triggerBudgetAlert(data.alertas);}else{setBotState('success',2200);}await Promise.all([refreshHero(),loadHistory()]);return data;}catch(e){toast(e.message||'Não consegui enviar para a planilha agora.');return null;}}
+function triggerBudgetAlert(alertas){const overlay=document.getElementById('flashOverlay');overlay.classList.add('on');setTimeout(()=>overlay.classList.remove('on'),3000);playBeep();toast('Orçamento estourado em: '+alertas.map(a=>a.categoria).join(', '));setBotState('error',3000);}
+function playBeep(){try{const ctx=new (window.AudioContext||window.webkitAudioContext)();[0,0.35,0.7].forEach(t=>{const o=ctx.createOscillator();const g=ctx.createGain();o.type='square';o.frequency.value=880;o.connect(g);g.connect(ctx.destination);g.gain.setValueAtTime(0.0001,ctx.currentTime+t);g.gain.exponentialRampToValueAtTime(0.25,ctx.currentTime+t+0.02);g.gain.exponentialRampToValueAtTime(0.0001,ctx.currentTime+t+0.25);o.start(ctx.currentTime+t);o.stop(ctx.currentTime+t+0.3);});}catch(e){}}
+let history=[];let payHoje=null;
+async function loadHistory(){if(!api.isConfigured()){history=[];renderHist();return;}try{const data=await api.get('historico',{limit:100});history=data.compras||[];renderHist();}catch(e){toast(e.message);}}
+function renderHist(){const box=document.getElementById('histList');const selected=catalog.filter(c=>c.checked);let html='<div class="date-card"><div class="date-head"><div><div class="date-title">Hoje · em aberto</div><div class="date-sub">'+selected.length+' itens</div></div><span class="date-tot">'+money(selected.reduce((s,i)=>s+(i.price||0),0))+'</span></div><div class="date-body">'+(selected.length?selected.map(i=>`<div class="row"><div class="r-name">${escapeHTML(i.name)}</div><div class="r-price">${money(i.price)}</div></div>`).join('')+'<div class="pay-grid" id="payHojeGrid"><button class="pay-opt" data-p="Pix">Pix</button><button class="pay-opt" data-p="Débito">Débito</button><button class="pay-opt" data-p="Crédito">Crédito</button></div><button class="btn gh" id="btnLoc" type="button">📍 Usar minha localização</button><div id="locStatus"></div><button class="btn" id="btnFinishToday">Finalizar</button>':'<div class="empty">Nenhum item selecionado.</div>')+'</div></div>';if(!history.length)html+='<div class="empty">Nenhuma compra registrada.</div>';history.forEach(h=>{html+=`<div class="date-card"><div class="date-head"><div><div class="date-title">${escapeHTML(h.date)}</div><div class="date-sub">${h.items.length} itens · ${escapeHTML(h.paymentMethod)}</div></div><span class="date-tot">${money(h.total)}</span></div><div class="date-body">${h.items.map(i=>`<div class="row"><div class="r-name${i.inList?'':' off'}">${i.qty}x ${escapeHTML(i.name)}</div><div class="r-price">${money(i.subtotal)}</div></div>`).join('')}<button class="btn gh edit-purchase" data-id="${escapeHTML(h.purchaseId)}">Editar compra</button><button class="btn mut delete-purchase" data-id="${escapeHTML(h.purchaseId)}">Excluir compra</button></div></div>`;});box.innerHTML=html;box.querySelectorAll('.delete-purchase').forEach(btn=>btn.addEventListener('click',async()=>{if(!confirm('Excluir esta compra definitivamente?'))return;try{await api.post('excluirCompra',{purchaseId:btn.dataset.id});await Promise.all([loadHistory(),refreshHero()]);toast('Compra excluída.');}catch(e){toast(e.message);}}));box.querySelectorAll('.edit-purchase').forEach(btn=>btn.addEventListener('click',()=>editPurchase(btn.dataset.id)));const payGrid=document.getElementById('payHojeGrid');payGrid?.querySelectorAll('.pay-opt').forEach(o=>o.addEventListener('click',()=>{payGrid.querySelectorAll('.pay-opt').forEach(x=>x.classList.remove('active'));o.classList.add('active');payHoje=o.dataset.p;}));document.getElementById('btnLoc')?.addEventListener('click',()=>{const status=document.getElementById('locStatus');status.textContent='Obtendo localização...';navigator.geolocation?.getCurrentPosition(pos=>{lastLocation={lat:pos.coords.latitude,lng:pos.coords.longitude};status.textContent='Localização adicionada.';},()=>status.textContent='Não foi possível obter localização',{timeout:8000});});document.getElementById('btnFinishToday')?.addEventListener('click',async e=>{if(!payHoje){toast('Escolha a forma de pagamento.');return;}e.currentTarget.disabled=true;const items=selected.map(i=>({name:i.name,category:i.category,qty:1,price:i.price,inList:true}));const saved=await enviarCompra(items,payHoje);if(!saved){e.currentTarget.disabled=false;return;}selected.forEach(i=>{i.timesUsed=(i.timesUsed||0)+1;i.checked=false;});saveJSON(LS.catalog,catalog);payHoje=null;lastLocation=null;toast('Compra registrada!');renderCatalog();});}
+async function editPurchase(purchaseId){const purchase=history.find(item=>item.purchaseId===purchaseId);if(!purchase)return;const payment=prompt('Forma de pagamento:',purchase.paymentMethod);if(payment===null)return;const items=[];for(const current of purchase.items){const name=prompt('Nome do item:',current.name);if(name===null)return;const category=prompt('Categoria:',current.category);if(category===null)return;const qty=prompt('Quantidade:',String(current.qty));if(qty===null)return;const price=prompt('Preço unitário:',String(current.price).replace('.',','));if(price===null)return;items.push({name:name.trim(),category:category.trim()||'Outros',qty:Number(String(qty).replace(',','.'))||1,price:Number(String(price).replace(',','.'))||0,inList:current.inList});}try{await api.post('atualizarCompra',{purchaseId,date:purchase.date,time:purchase.time,paymentMethod:payment,items});await Promise.all([loadHistory(),refreshHero()]);toast('Compra atualizada.');}catch(e){toast(e.message);}}
+document.querySelectorAll('#periodChips .chip').forEach(c=>c.addEventListener('click',()=>{document.querySelectorAll('#periodChips .chip').forEach(x=>x.classList.remove('active'));c.classList.add('active');loadPainel(c.dataset.p);}));
+let chartInst=null;
+async function loadPainel(periodo){periodo=periodo||'mes';const alertBox=document.getElementById('painelAlert');alertBox.innerHTML='';try{renderPainel(await api.get('painel',{periodo}));}catch(e){alertBox.innerHTML=`<div class="warn">${escapeHTML(e.message)}</div>`;}}
+function renderPainel(data){document.getElementById('pIncome').textContent=money(data.receita);document.getElementById('pSpent').textContent=money(data.gastoTotal);document.getElementById('pFree').textContent=money(data.saldoLivre);const alertBox=document.getElementById('painelAlert');if(data.alertas&&data.alertas.length>0){alertBox.innerHTML=`<div class="warn">Orçamento estourado: ${data.alertas.map(a=>escapeHTML(a.categoria)).join(', ')}</div>`;}const colors={Necessidade:'#0C8A54',Desejo:'#5FCB92',Investimento:'#B9EDD1'};const seg=document.getElementById('ruleSeg');const total=data.grupos.reduce((s,g)=>s+g.gasto,0)||1;seg.innerHTML=data.grupos.map(g=>`<div class="seg-part" style="width:${Math.max(0,Math.min(100,(g.gasto/total)*100))}%;background:${colors[g.grupo]||'#ccc'}"></div>`).join('');const rows=document.getElementById('ruleRows');rows.innerHTML=data.grupos.map(g=>{const pctIdeal=data.receita>0?Math.round((g.meta/data.receita)*100):0;return`<div class="rule-row"><div><span class="rule-dot" style="background:${colors[g.grupo]||'#ccc'}"></span><span class="rule-lb">${escapeHTML(g.grupo)} (${pctIdeal}% ideal)</span></div><div class="rule-vals">${money(g.gasto)} / ${money(g.meta)}</div></div>`;}).join('');const ctx=document.getElementById('chart');if(chartInst)chartInst.destroy();chartInst=new Chart(ctx,{type:'bar',data:{labels:data.grupos.map(g=>g.grupo),datasets:[{label:'Gasto',data:data.grupos.map(g=>Math.round(g.gasto)),backgroundColor:'#0C8A54',borderRadius:6},{label:'Meta',data:data.grupos.map(g=>Math.round(g.meta)),backgroundColor:'#B9EDD1',borderRadius:6}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom'}},scales:{y:{beginAtZero:true}}}});}
+async function testConnection(){const status=document.getElementById('connStatus');status.innerHTML='🔄 Testando conexão...';try{const data=await api.get('config');applyConfig(data);status.innerHTML=`<span style="color:var(--gd);font-weight:600">✓ Conectado<br><span style="font-size:12px;font-weight:400;margin-top:4px;display:block">${cats.length} categorias sincronizadas</span></span>`;}catch(e){status.innerHTML=`<span style="color:var(--red)">✗ ${escapeHTML(e.message)}</span>`;}}
+function applyConfig(data){cats=(data.categorias||[]).map(c=>({n:c.categoria,v:c.orcamento,g:c.grupo}));custos=data.custosFixos||[];proventos=data.proventos||[];investimentos=data.investimentos||[];}
+function renderEditCats(){const box=document.getElementById('editCats');box.innerHTML='';cats.forEach((item,index)=>{const row=document.createElement('div');row.className='edit-row';row.innerHTML=`<input class="nm" value="${escapeHTML(item.n)}"><select>${GRUPOS.map(g=>`<option ${g===item.g?'selected':''}>${g}</option>`).join('')}</select><input class="vl" inputmode="decimal" value="${item.v}"><button class="remove-row" type="button">✕</button>`;row.querySelector('.nm').addEventListener('change',e=>item.n=e.target.value);row.querySelector('select').addEventListener('change',e=>item.g=e.target.value);row.querySelector('.vl').addEventListener('change',e=>item.v=parseFloat(e.target.value)||0);row.querySelector('.remove-row').addEventListener('click',()=>{cats.splice(index,1);renderEditCats();});box.appendChild(row);});const addBtn=document.createElement('button');addBtn.className='btn mut';addBtn.style.marginTop='6px';addBtn.textContent='Adicionar categoria';addBtn.addEventListener('click',()=>{cats.push({n:'Nova categoria',v:0,g:'Necessidade'});renderEditCats();});box.appendChild(addBtn);}
+function renderEditSimple(target,list,placeholder){const box=document.getElementById(target);box.innerHTML='';list.forEach((item,index)=>{const row=document.createElement('div');row.className='edit-row simple-edit';row.innerHTML=`<input class="nm" value="${escapeHTML(item.n)}"><input class="vl" inputmode="decimal" value="${item.v}"><button class="remove-row" type="button">✕</button>`;row.querySelector('.nm').addEventListener('change',e=>item.n=e.target.value);row.querySelector('.vl').addEventListener('change',e=>item.v=parseFloat(e.target.value)||0);row.querySelector('.remove-row').addEventListener('click',()=>{list.splice(index,1);renderEditSimple(target,list,placeholder);});box.appendChild(row);});const addBtn=document.createElement('button');addBtn.className='btn mut';addBtn.style.marginTop='6px';addBtn.textContent=placeholder;addBtn.addEventListener('click',()=>{list.push({n:'Novo item',v:0});renderEditSimple(target,list,placeholder);});box.appendChild(addBtn);}
+function renderRegistro(){renderEditCats();renderEditSimple('editCustos',custos,'Adicionar custo fixo');renderEditSimple('editProventos',proventos,'Adicionar provento');}
+document.getElementById('btnSaveRegistro').addEventListener('click',async()=>{const btn=document.getElementById('btnSaveRegistro');btn.textContent='Salvando...';btn.disabled=true;try{await api.post('salvarConfig',{categorias:cats,custosFixos:custos,proventos});toast('Mudanças salvas na planilha.');await refreshHero();}catch(e){toast(e.message);}btn.textContent='Salvar mudanças na planilha';btn.disabled=false;});
+refreshHero();
+// Teste de conexão automático ao iniciar (mostra na tela de Status)
+setTimeout(()=>{testConnection();},2400);
+
+/* ===================== TROCAR PLANILHA (dentro de Status) ===================== */
+document.getElementById('btnTrocarUrl').addEventListener('click', async ()=>{
+  const nova = document.getElementById('trocarUrlInput').value.trim();
+  const token = document.getElementById('trocarTokenInput').value.trim();
+  if(!nova || !token){ toast('Informe a URL e o token de acesso.'); return; }
+  SCRIPT_URL = nova;
+  API_TOKEN = token;
+  api.configure(SCRIPT_URL, API_TOKEN);
+  saveJSON(LS.scriptUrl, SCRIPT_URL);
+  saveJSON(LS.apiToken, API_TOKEN);
+  document.getElementById('trocarUrlInput').value='';
+  document.getElementById('trocarTokenInput').value='';
+  toast('Planilha atualizada.');
+  await testConnection();
+  renderRegistro();
+  refreshHero();
+});
+document.getElementById('btnTrocarApiKey').addEventListener('click', ()=>{
+  const nova = document.getElementById('trocarApiKeyInput').value.trim();
+  if(!nova){ toast('Cole a chave de API primeiro.'); return; }
+  aiApiKey = nova; saveJSON(LS.aiKey, aiApiKey);
+  document.getElementById('trocarApiKeyInput').value='';
+  toast('Chave de IA salva.');
+});
+
+/* ===================== BOAS-VINDAS (planilha própria por usuário) ===================== */
+async function tentarConectarWelcome(){
+  const url = document.getElementById('welcomeUrlInput').value.trim();
+  const token = document.getElementById('welcomeTokenInput').value.trim();
+  const status = document.getElementById('welcomeStatus');
+  if(!url || !token){ status.innerHTML='<span style="color:var(--red)">Informe a URL e o token.</span>'; return; }
+  status.innerHTML = '🔄 Testando...';
+  try{
+    api.configure(url, token);
+    const data = await api.get('config');
+    SCRIPT_URL = url;
+    API_TOKEN = token;
+    saveJSON(LS.scriptUrl, SCRIPT_URL);
+    saveJSON(LS.apiToken, API_TOKEN);
+    applyConfig(data);
+    document.getElementById('welcomeScreen').classList.remove('show');
+    toast('Planilha conectada!');
+    refreshHero();
+    startOnboarding();
+  }catch(e){
+    api.configure(SCRIPT_URL, API_TOKEN);
+    status.innerHTML = `<span style="color:var(--red)">${escapeHTML(e.message)}</span>`;
+  }
+}
+document.getElementById('btnWelcomeConnect').addEventListener('click', tentarConectarWelcome);
+if(!api.isConfigured()){ document.getElementById('welcomeScreen').classList.add('show'); }
+
+/* ===================== AGENTE DE IA (texto, voz e onboarding) ===================== */
+function openAi(){ document.getElementById('aiOverlay').classList.add('open'); document.getElementById('aiInput').focus(); }
+function closeAi(){ document.getElementById('aiOverlay').classList.remove('open'); if('speechSynthesis' in window) speechSynthesis.cancel(); }
+document.getElementById('btnOpenAi').addEventListener('click', openAi);
+document.getElementById('btnCloseAi').addEventListener('click', closeAi);
+
+const btnVoiceToggle = document.getElementById('btnAiVoiceToggle');
+btnVoiceToggle.textContent = aiVoiceOn ? '🔊' : '🔇';
+btnVoiceToggle.addEventListener('click', ()=>{
+  aiVoiceOn = !aiVoiceOn; saveJSON(LS.aiVoice, aiVoiceOn);
+  btnVoiceToggle.textContent = aiVoiceOn ? '🔊' : '🔇';
+  if(!aiVoiceOn && 'speechSynthesis' in window) speechSynthesis.cancel();
+});
+
+function renderAiBubble(role, text){
+  const box = document.getElementById('aiMsgs');
+  const el = document.createElement('div');
+  el.className = 'ai-msg ' + role;
+  el.textContent = text;
+  box.appendChild(el);
+  box.scrollTop = box.scrollHeight;
+  return el;
+}
+function renderAiConfigCard(cfg){
+  const box = document.getElementById('aiMsgs');
+  const el = document.createElement('div');
+  el.className = 'ai-config-card';
+  const linhas = [];
+  if(cfg.proventos) linhas.push(`Receitas: ${cfg.proventos.map(p=>p.n+' ('+money(p.v)+')').join(', ')}`);
+  if(cfg.custosFixos) linhas.push(`Custos fixos: ${cfg.custosFixos.map(p=>p.n+' ('+money(p.v)+')').join(', ')}`);
+  if(cfg.investimentos) linhas.push(`Investimentos: ${cfg.investimentos.map(p=>p.nome+' — '+p.tipo+' ('+money(p.valor)+', '+p.taxa+'% a.a.)').join(', ')}`);
+  const title = document.createElement('b');
+  title.textContent = 'Detectei estas informações:';
+  const preview = document.createElement('pre');
+  preview.textContent = linhas.join('\n');
+  el.append(title, preview);
+  const btn = document.createElement('button');
+  btn.className = 'btn'; btn.style.marginTop='4px'; btn.textContent = 'Confirmar e salvar na planilha';
+  btn.addEventListener('click', async ()=>{
+    btn.textContent = 'Salvando...'; btn.disabled = true;
+    try{
+      if(cfg.proventos){ proventos = cfg.proventos; await api.post('proventos',{itens:proventos}); }
+      if(cfg.custosFixos){ custos = cfg.custosFixos; await api.post('custosFixos',{itens:custos}); }
+      if(cfg.investimentos){ investimentos = cfg.investimentos; await api.post('investimentos',{itens:cfg.investimentos}); }
+      btn.textContent = '✓ Salvo na planilha';
+      toast('Configuração salva!');
+      refreshHero();
+    }catch(e){ btn.textContent = 'Erro ao salvar, tentar de novo'; btn.disabled = false; }
+  });
+  el.appendChild(btn);
+  box.appendChild(el);
+  box.scrollTop = box.scrollHeight;
+}
+function falarTexto(texto){
+  if(!aiVoiceOn || !('speechSynthesis' in window)) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(texto);
+  u.lang = 'pt-BR';
+  speechSynthesis.speak(u);
+}
+
+async function buscarContextoFinanceiro(){
+  if(!api.isConfigured()) return 'O usuário ainda não conectou nenhuma planilha.';
+  try{
+    const [painelResp, investResp] = await Promise.all([api.get('painel',{periodo:'mes'}),api.get('investimentos')]);
+    let ctx = '';
+    if(painelResp && painelResp.ok){
+      ctx += `Receita mensal: ${money(painelResp.receita)}. Gasto total: ${money(painelResp.gastoTotal)}. Saldo livre: ${money(painelResp.saldoLivre)}. `;
+      ctx += `Regra 50-30-20: ` + painelResp.grupos.map(g=>`${g.grupo} gastou ${money(g.gasto)} de meta ${money(g.meta)}`).join('; ') + '. ';
+    }
+    if(investResp && investResp.ok && investResp.investimentos.length){
+      ctx += `Investimentos atuais: ` + investResp.investimentos.map(i=>`${i.nome} (${i.tipo}, ${money(i.valor)}, taxa ${i.taxa}% a.a., atualizado em ${i.atualizadoEm})`).join('; ') + '. ';
+    }
+    return ctx || 'Sem dados financeiros ainda — planilha conectada mas vazia.';
+  }catch(e){ return 'Não consegui buscar os dados financeiros agora.'; }
+}
+
+/* ===================== MOTOR LOCAL (WebLLM, roda no aparelho, sem internet) ===================== */
+const LOCAL_MODEL_ID = 'Llama-3.2-3B-Instruct-q4f16_1-MLC';
+let localEngine = null;
+let localEngineStatus = 'idle'; // idle | loading | ready | unavailable
+
+function webgpuDisponivel(){
+  return typeof navigator !== 'undefined' && !!navigator.gpu;
+}
+
+async function garantirEngineLocal(onProgress){
+  if(localEngineStatus === 'ready') return true;
+  if(localEngineStatus === 'unavailable') return false;
+  if(!webgpuDisponivel()){
+    console.warn('DimDim: este navegador/aparelho não suporta WebGPU. Usando a nuvem (Gemini).');
+    localEngineStatus = 'unavailable'; return false;
+  }
+  if(!window.WebLLM){
+    console.warn('DimDim: a biblioteca WebLLM não carregou (veja o erro acima, se houver). Usando a nuvem (Gemini).');
+    localEngineStatus = 'unavailable'; return false;
+  }
+  try{
+    localEngineStatus = 'loading';
+    localEngine = await window.WebLLM.CreateMLCEngine(LOCAL_MODEL_ID, {
+      initProgressCallback: (p)=>{ if(onProgress) onProgress(p); }
+    });
+    localEngineStatus = 'ready';
+    return true;
+  }catch(e){
+    console.error('DimDim: WebLLM carregou mas não conseguiu iniciar o modelo local:', e);
+    localEngineStatus = 'unavailable';
+    return false;
+  }
+}
+
+function precisaBuscarInternet(texto){
+  return /taxa|rentabilidade|\bcdi\b|\bselic\b|\bipca\b|cota[çc][ãa]o|atualiz|not[íi]cia|pre[çc]o atual|hoje em dia/i.test(texto);
+}
+
+function marcarOrigemLocal(bubbleEl){
+  const tag = document.createElement('div');
+  tag.style.cssText = 'font-size:10.5px;color:var(--soft);margin-top:5px;font-weight:600;';
+  tag.textContent = '🖥️ processado no seu aparelho, sem internet';
+  bubbleEl.appendChild(tag);
+}
+
+function processarRespostaTexto(textoResposta, origemLocal){
+  const match = textoResposta.match(/```dimdim-config\s*([\s\S]*?)```/);
+  const textoLimpo = textoResposta.replace(/```dimdim-config[\s\S]*?```/, '').trim();
+  const bubble = renderAiBubble('bot', textoLimpo || textoResposta);
+  if(origemLocal) marcarOrigemLocal(bubble);
+  aiMessages.push({role:'assistant', content:textoResposta});
+  falarTexto(textoLimpo || textoResposta);
+  if(match){
+    try{ renderAiConfigCard(JSON.parse(match[1])); setBotState('success',2200); }catch(e){}
+  }
+}
+
+async function enviarParaLocalUI(texto){
+  aiMessages.push({role:'user', content:texto});
+  const thinking = renderAiBubble('thinking', 'Pensando (local, sem internet)...');
+  setBotThinking(true);
+  const contexto = await buscarContextoFinanceiro();
+  const systemPrompt = `Você é o assistente financeiro do app DimDim, conversando em português do Brasil, direto e amigável, respostas curtas. Contexto financeiro atual do usuário: ${contexto}
+Se o usuário estiver contando receita, custos fixos, gastos de cartão, dívidas ou investimentos, depois de entender o suficiente, responda normalmente E inclua ao final um bloco:
+\`\`\`dimdim-config
+{"proventos":[{"n":"Nome","v":1000}],"custosFixos":[{"n":"Nome","v":500}],"investimentos":[{"nome":"Nome","tipo":"Tipo","valor":1000,"taxa":10.5}]}
+\`\`\`
+Inclua só as chaves que fizerem sentido.`;
+  try{
+    const historico = [
+      {role:'system', content: systemPrompt},
+      ...aiMessages.map(m=>({role: m.role==='assistant' ? 'assistant' : 'user', content: m.content}))
+    ];
+    const resp = await localEngine.chat.completions.create({ messages: historico });
+    const textoResposta = (resp.choices && resp.choices[0] && resp.choices[0].message && resp.choices[0].message.content || '').trim() || 'Não consegui responder agora.';
+    thinking.remove();
+    setBotThinking(false);
+    processarRespostaTexto(textoResposta, true);
+  }catch(e){
+    console.error('Falha no motor local, caindo pro Gemini:', e);
+    thinking.remove();
+    setBotThinking(false);
+    aiMessages.pop();
+    await enviarParaGemini(texto);
+  }
+}
+
+async function enviarMensagemAi(texto){
+  if(!texto.trim()) return;
+  renderAiBubble('user', texto);
+
+  if(precisaBuscarInternet(texto)){
+    await enviarParaGemini(texto);
+    return;
+  }
+  if(localEngineStatus === 'unavailable'){
+    await enviarParaGemini(texto);
+    return;
+  }
+
+  const progresso = renderAiBubble('thinking', 'Preparando modelo local (só na primeira vez)...');
+  const localOk = await garantirEngineLocal((p)=>{
+    if(p && typeof p.progress === 'number'){
+      progresso.textContent = `Baixando modelo local... ${Math.round(p.progress*100)}%`;
+    } else if(p && p.text){
+      progresso.textContent = p.text;
+    }
+  });
+  progresso.remove();
+
+  if(localOk){
+    await enviarParaLocalUI(texto);
+  } else {
+    await enviarParaGemini(texto);
+  }
+}
+
+async function enviarParaGemini(texto){
+  aiMessages.push({role:'user', content:texto});
+  const thinking = renderAiBubble('thinking', 'Pensando...');
+  setBotThinking(true);
+
+  const contexto = await buscarContextoFinanceiro();
+  const systemPrompt = `Você é o assistente financeiro do app DimDim, conversando em português do Brasil, direto e amigável, respostas curtas (poucos parágrafos). Contexto financeiro atual do usuário: ${contexto}
+Se o usuário estiver te contando receita, custos fixos, gastos de cartão, dívidas ou investimentos (onboarding inicial), depois de entender o suficiente, responda normalmente E inclua ao final um bloco de código no formato:
+\`\`\`dimdim-config
+{"proventos":[{"n":"Nome","v":1000}],"custosFixos":[{"n":"Nome","v":500}],"investimentos":[{"nome":"Nome","tipo":"Tipo","valor":1000,"taxa":10.5}]}
+\`\`\`
+Inclua só as chaves que fizerem sentido pro que foi dito. Se o usuário perguntar sobre rentabilidade de algum investimento (CDB, Tesouro, poupança, fundos etc.), use a busca do Google pra achar a taxa atual antes de responder.`;
+
+  const geminiContents = aiMessages.map(m=>({
+    role: m.role==='assistant' ? 'model' : 'user',
+    parts:[{text:m.content}]
+  }));
+
+  try{
+    const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`, {
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json',
+        'x-goog-api-key': aiApiKey
+      },
+      body: JSON.stringify({
+        system_instruction:{parts:[{text:systemPrompt}]},
+        contents: geminiContents,
+        tools:[{google_search:{}}]
+      })
+    });
+    const data = await resp.json();
+    thinking.remove();
+    setBotThinking(false);
+    if(data.error){
+      if(data.error.code === 401 || data.error.code === 403 || /API key/i.test(data.error.message||'')){
+        aiMessages.pop();
+        renderAiBubble('bot','A chave de IA integrada não foi aceita pelo Gemini agora. Tenta de novo em instantes — se persistir, avise o desenvolvedor do app.');
+      } else {
+        aiMessages.pop();
+        renderAiBubble('bot', 'Erro da API: ' + data.error.message);
+      }
+      return;
+    }
+    const parts = (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) || [];
+    const textoResposta = parts.map(p=>p.text||'').join('\n').trim() || 'Não consegui responder agora.';
+    processarRespostaTexto(textoResposta, false);
+  }catch(e){
+    thinking.remove();
+    setBotThinking(false);
+    aiMessages.pop();
+    renderAiBubble('bot', 'Não consegui falar com o servidor agora. Tenta de novo em instantes.');
+  }
+}
+
+document.getElementById('btnAiSend').addEventListener('click', ()=>{
+  const input = document.getElementById('aiInput');
+  const texto = input.value; input.value='';
+  enviarMensagemAi(texto);
+});
+document.getElementById('aiInput').addEventListener('keydown', (e)=>{
+  if(e.key==='Enter'){ document.getElementById('btnAiSend').click(); }
+});
+
+function startOnboarding(){
+  aiMessages = [];
+  document.getElementById('aiMsgs').innerHTML = '';
+  const msg = 'Oi! Sou o assistente do DimDim 👋 Vamos configurar tudo rapidinho? Me conta: qual sua receita mensal, seus custos fixos (aluguel, contas), gastos de cartão de crédito (e se ainda tem parcelas), outras dívidas, e se você tem investimentos (me diga o tipo, valor e — se souber — a taxa). Pode mandar tudo em uma mensagem só ou aos poucos, como preferir.';
+  renderAiBubble('bot', msg);
+  aiMessages.push({role:'assistant', content:msg});
+  openAi();
+}
+
+/* ===================== ENTRADA POR VOZ (Web Speech API) ===================== */
+const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+const btnMic = document.getElementById('btnAiMic');
+if(!SpeechRec){
+  btnMic.style.display = 'none';
+} else {
+  const recognizer = new SpeechRec();
+  recognizer.lang = 'pt-BR';
+  recognizer.interimResults = false;
+  let ouvindo = false;
+  recognizer.addEventListener('result', (e)=>{
+    const texto = e.results[0][0].transcript;
+    document.getElementById('aiInput').value = texto;
+    enviarMensagemAi(texto);
+    document.getElementById('aiInput').value = '';
+  });
+  recognizer.addEventListener('end', ()=>{ ouvindo=false; btnMic.classList.remove('listening'); });
+  recognizer.addEventListener('error', ()=>{ ouvindo=false; btnMic.classList.remove('listening'); });
+  btnMic.addEventListener('click', ()=>{
+    if(ouvindo){ recognizer.stop(); ouvindo=false; btnMic.classList.remove('listening'); return; }
+    try{ recognizer.start(); ouvindo=true; btnMic.classList.add('listening'); }catch(e){}
+  });
+}
+
+if('serviceWorker'in navigator){
+  let refrescando = false;
+  navigator.serviceWorker.addEventListener('controllerchange', ()=>{
+    if(refrescando) return;
+    refrescando = true;
+    window.location.reload();
+  });
+  window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
+}
