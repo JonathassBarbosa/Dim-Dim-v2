@@ -10,6 +10,13 @@ assert.deepEqual(localDateTime(new Date('2026-07-29T01:30:00Z')), {
 });
 
 const html = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+const frontend = [
+  html,
+  fs.readFileSync(new URL('../js/app.js', import.meta.url), 'utf8'),
+  fs.readFileSync(new URL('../js/config.js', import.meta.url), 'utf8')
+].join('\n');
+assert.doesNotMatch(frontend, /(?:AIza|AQ\.)[A-Za-z0-9._-]{20,}/, 'O frontend não pode conter chave de API.');
+assert.doesNotMatch(frontend, /generativelanguage\.googleapis\.com/, 'O frontend não deve chamar o Gemini diretamente.');
 const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]);
 assert.equal(new Set(ids).size, ids.length, 'O HTML não pode ter IDs duplicados.');
 
