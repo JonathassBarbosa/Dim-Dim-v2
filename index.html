@@ -100,6 +100,10 @@
     <div class="hero-top">
       <div class="hero-brand"><img src="icons/icon-192.png" alt=""><span>DimDim</span></div>
       <div class="hero-icons">
+        <button class="notification-bell" id="btnOpenNotifications" type="button" aria-label="Abrir notificações">
+          🔔
+          <span class="notification-badge" id="notificationBadge" hidden>0</span>
+        </button>
         <button id="btnToggleSaldo" type="button" aria-label="Mostrar ou esconder saldo">👁</button>
         <button id="btnOpenRegistro" type="button" aria-label="Configurações">⚙️</button>
       </div>
@@ -197,6 +201,71 @@
     <div id="editProventos"></div>
 
     <button class="btn" style="margin-top:16px" id="btnSaveRegistro">Salvar mudanças</button>
+  </div>
+</div>
+
+<!-- CENTRAL DE NOTIFICAÇÕES -->
+<div class="sheet-overlay" id="notificationsOverlay">
+  <div class="sheet notifications-sheet">
+    <div class="sheet-head">
+      <div>
+        <h2>Notificações</h2>
+        <p class="sec-sub">Alertas e dicas com base nos seus dados reais</p>
+      </div>
+      <button class="sheet-close" id="btnCloseNotifications" type="button">✕</button>
+    </div>
+
+    <div class="notification-summary" id="notificationSummary">
+      <div>
+        <span>Disponível no mês</span>
+        <strong id="notificationAvailable">R$ 0,00</strong>
+      </div>
+      <div>
+        <span>Limite seguro por dia</span>
+        <strong id="notificationSafeDaily">R$ 0,00</strong>
+      </div>
+    </div>
+
+    <div class="notification-toolbar">
+      <div class="seclabel">Mais recentes</div>
+      <button id="btnReadAllNotifications" type="button">Marcar todas como lidas</button>
+    </div>
+    <div id="notificationList">
+      <div class="empty">Carregando notificações...</div>
+    </div>
+
+    <div class="seclabel">Preferências</div>
+    <div class="notification-settings">
+      <label class="setting-toggle">
+        <span><strong>Push no aparelho</strong><small id="pushSupportText">Receber mesmo com o app fechado</small></span>
+        <input id="pushEnabled" type="checkbox">
+      </label>
+      <label class="setting-toggle">
+        <span><strong>Dica financeira diária</strong><small>Uma sugestão baseada no limite do dia</small></span>
+        <input id="dailyTipEnabled" type="checkbox">
+      </label>
+      <label class="setting-toggle">
+        <span><strong>Saldo livre baixo</strong><small>Aviso para reduzir gastos não essenciais</small></span>
+        <input id="lowBalanceEnabled" type="checkbox">
+      </label>
+      <label class="setting-toggle">
+        <span><strong>Orçamento atingido</strong><small>Alerta ao chegar na meta de uma categoria</small></span>
+        <input id="budgetAlertEnabled" type="checkbox">
+      </label>
+      <label class="setting-toggle">
+        <span><strong>Contas a vencer</strong><small>Lembrete com até três dias de antecedência</small></span>
+        <input id="billDueEnabled" type="checkbox">
+      </label>
+      <div class="notification-fields">
+        <label>Horário da dica
+          <input class="field" id="dailyTipTime" type="time" value="08:00">
+        </label>
+        <label>Avisar abaixo de
+          <input class="field" id="lowBalanceThreshold" type="number" min="0" step="10" value="100">
+        </label>
+      </div>
+    </div>
+    <div class="notification-status" id="notificationStatus"></div>
   </div>
 </div>
 
