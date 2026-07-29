@@ -12,6 +12,8 @@ const SHEETS = {
   investimentos: 'Investimentos_App'
 };
 const TOKEN_PROPERTY = 'DIMDIM_API_TOKEN';
+const GEMINI_KEY_PROPERTY = 'GEMINI_API_KEY';
+const GEMINI_MODEL = 'gemini-3.5-flash';
 const TIME_ZONE = 'America/Sao_Paulo';
 
 function _ss() { return SpreadsheetApp.getActiveSpreadsheet(); }
@@ -80,6 +82,9 @@ function doPost(e) {
     const body = JSON.parse(e.postData.contents);
     _authorize(body.token);
     const action = body.action;
+    if (action === 'gemini') {
+      return _json({ ok: true, ...chamarGemini(body) });
+    }
     const result = _withLock(function () {
       if (action === 'compra') return registrarCompra(body);
       if (action === 'atualizarCompra') return atualizarCompra(body);
@@ -96,6 +101,48 @@ function doPost(e) {
   } catch (error) {
     return _json({ ok: false, error: String(error.message || error) });
   }
+}
+
+function chamarGemini(payload) {
+  const key = PropertiesService.getScriptProperties().getProperty(GEMINI_KEY_PROPERTY);
+  if (!key) throw new Error('A chave do Gemini não está configurada no backend.');
+
+  const systemInstruction = String(payload.systemInstruction || '').slice(0, 20000);
+  const contents = Array.isArray(payload.contents) ? payload.contents.slice(-30) : [];
+  const totalLength = JSON.stringify(contents).length;
+  if (!contents.length || totalLength > 60000) throw new Error('Contexto da IA ausente ou muito grande.');
+
+  const cache = CacheService.getScriptCache();
+  const minuteKey = 'gemini-rate-' + Utilities.formatDate(new Date(), 'UTC', 'yyyyMMddHHmm');
+  const current = Number(cache.get(minuteKey)) || 0;
+  if (current >= 30) throw new Error('Limite temporário da IA atingido. Tente novamente em um minuto.');
+  cache.put(minuteKey, String(current + 1), 90);
+
+  const response = UrlFetchApp.fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+    {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { 'x-goog-api-key': key },
+      payload: JSON.stringify({
+        system_instruction: { parts: [{ text: systemInstruction }] },
+        contents: contents,
+        tools: [{ google_search: {} }]
+      }),
+      muteHttpExceptions: true
+    }
+  );
+  const status = response.getResponseCode();
+  let data;
+  try {
+    data = JSON.parse(response.getContentText());
+  } catch (error) {
+    throw new Error('O Gemini retornou uma resposta inválida.');
+  }
+  if (status < 200 || status >= 300 || data.error) {
+    throw new Error('Gemini: ' + (data.error && data.error.message ? data.error.message : `HTTP ${status}`));
+  }
+  return data;
 }
 
 function registrarCompra(payload) {
@@ -321,4 +368,10 @@ function mostrarTokenAcesso() {
   if (!_token()) throw new Error('Execute configurarPlanilhaInicial primeiro.');
   Logger.log('TOKEN DIMDIM: ' + _token());
   return _token();
+}
+
+function verificarConfiguracaoGemini() {
+  const configured = Boolean(PropertiesService.getScriptProperties().getProperty(GEMINI_KEY_PROPERTY));
+  Logger.log(configured ? 'Chave Gemini configurada.' : 'Chave Gemini ausente.');
+  return configured;
 }
