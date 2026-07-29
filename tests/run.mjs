@@ -35,6 +35,7 @@ for (const asset of [
   '../js/config.js',
   '../js/dom.js',
   '../js/notifications.js',
+  '../js/open-finance.js',
   '../js/storage.js',
   '../manifest.json',
   '../sw.js'
@@ -88,5 +89,45 @@ assert.doesNotMatch(frontend, /VAPID_PRIVATE_KEY/);
 const serviceWorker = fs.readFileSync(new URL('../sw.js', import.meta.url), 'utf8');
 assert.match(serviceWorker, /addEventListener\('push'/);
 assert.match(serviceWorker, /addEventListener\('notificationclick'/);
+
+const openFinanceSchema = fs.readFileSync(
+  new URL('../supabase/migrations/202607300001_open_finance_beta.sql', import.meta.url),
+  'utf8'
+);
+for (const table of [
+  'financial_connections', 'open_finance_consents', 'external_accounts',
+  'external_credit_card_bills', 'external_transactions', 'provider_webhook_events'
+]) {
+  assert.match(openFinanceSchema, new RegExp(`create table if not exists public\\.${table}\\b`), `Tabela Open Finance ausente: ${table}`);
+  assert.match(openFinanceSchema, new RegExp(`alter table public\\.${table} enable row level security`), `RLS Open Finance ausente: ${table}`);
+}
+assert.match(openFinanceSchema, /digest\(normalized_document, 'sha256'\)/);
+assert.doesNotMatch(openFinanceSchema, /document_number\s+text/, 'O documento completo não pode ser armazenado.');
+assert.match(openFinanceSchema, /create or replace function public\.open_finance_summary\(\)/);
+
+const pluggyFrontend = fs.readFileSync(new URL('../js/open-finance.js', import.meta.url), 'utf8');
+assert.match(html, /cdn\.pluggy\.ai\/pluggy-connect/);
+assert.match(pluggyFrontend, /criarTokenPluggy/);
+assert.match(pluggyFrontend, /revogarItemPluggy/);
+assert.doesNotMatch(frontend + pluggyFrontend, /PLUGGY_CLIENT_SECRET|PLUGGY_WEBHOOK_SECRET/);
+
+for (const name of ['pluggy-connect-token', 'pluggy-register-item', 'pluggy-revoke-item', 'pluggy-webhook']) {
+  const source = fs.readFileSync(
+    new URL(`../supabase/functions/${name}/index.ts`, import.meta.url),
+    'utf8'
+  );
+  assert.doesNotMatch(source, /clientSecret\s*:\s*['"][^'"]+['"]/, `${name} não pode conter segredo literal.`);
+}
+const connectFunction = fs.readFileSync(
+  new URL('../supabase/functions/pluggy-connect-token/index.ts', import.meta.url),
+  'utf8'
+);
+assert.match(connectFunction, /Deno\.env\.get\('PLUGGY_CLIENT_SECRET'\)/);
+assert.match(connectFunction, /clientUserId: user\.id/);
+const webhookFunction = fs.readFileSync(
+  new URL('../supabase/functions/pluggy-webhook/index.ts', import.meta.url),
+  'utf8'
+);
+assert.match(webhookFunction, /Deno\.env\.get\('PLUGGY_WEBHOOK_SECRET'\)/);
 
 console.log('DimDim: testes estáticos concluídos com sucesso.');

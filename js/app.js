@@ -6,6 +6,7 @@ import { loadJSON, saveJSON } from './storage.js';
 import { DimDimApi } from './api.js';
 import { escapeHTML, localDateTime } from './dom.js';
 import { createNotificationCenter } from './notifications.js';
+import { createOpenFinance } from './open-finance.js';
 
 let BACKEND_URL = SUPABASE_URL || loadJSON(LS.supabaseUrl, '');
 let ANON_KEY = SUPABASE_ANON_KEY || loadJSON(LS.supabaseAnonKey, '');
@@ -22,6 +23,7 @@ function uid(){return globalThis.crypto?.randomUUID?.() || ('i'+Math.random().to
 function money(n){return'R$ '+(Number(n)||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});}
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2400);}
 const notificationCenter=createNotificationCenter({api,money,toast,vapidPublicKey:VAPID_PUBLIC_KEY});
+const openFinance=createOpenFinance({api,toast});
 notificationCenter.init();
 setTimeout(()=>{document.getElementById('splash').classList.add('fade');},3300);
 setTimeout(()=>{document.getElementById('splash').style.display='none';},3900);
@@ -178,7 +180,7 @@ async function autenticarWelcome(createAccount = false){
     document.getElementById('welcomeScreen').classList.remove('show');
     toast('Conta conectada!');
     await Promise.all([testConnection(),loadCatalog(),refreshHero(),notificationCenter.refresh()]);
-    if(createAccount) startOnboarding();
+    if(createAccount) openFinance.open();
   }catch(e){
     status.innerHTML = `<span style="color:var(--red)">${escapeHTML(e.message)}</span>`;
   }
@@ -256,8 +258,19 @@ function falarTexto(texto){
 async function buscarContextoFinanceiro(){
   if(!api.isAuthenticated()) return 'O usuário ainda não entrou na conta.';
   try{
-    const [summary, investResp, goalResp] = await Promise.all([api.get('resumoFinanceiro'),api.get('investimentos'),api.get('metas')]);
+    const [summary, investResp, goalResp, openFinanceResp] = await Promise.all([
+      api.get('resumoFinanceiro'),
+      api.get('investimentos'),
+      api.get('metas'),
+      api.get('resumoOpenFinance').catch(()=>null)
+    ]);
     let ctx = `Resumo calculado pelo banco para ${summary.referenceMonth}: receita ${money(summary.income)}; gastos já registrados ${money(summary.spent)}; custos fixos planejados ${money(summary.fixedCommitments)}; parcelas pendentes no mês ${money(summary.pendingInstallments)}; reserva para metas ${money(summary.goalReserve)}; valor realmente disponível até o fim do mês ${money(summary.available)}; limite seguro por dia ${money(summary.safeDaily)}; faltam ${summary.remainingDays} dias. `;
+    if(openFinanceResp?.connected){
+      ctx += `Open Finance sincronizado: saldo bancário atual ${money(openFinanceResp.bankBalance)}; saldo usado nos cartões ${money(openFinanceResp.creditCardBalance)}. `;
+      if(openFinanceResp.upcomingBills?.length){
+        ctx += `Próximas faturas: ${openFinanceResp.upcomingBills.map(b=>`${b.institution||'Cartão'} vence em ${b.dueDate}, no valor de ${money(b.amount)}`).join('; ')}. `;
+      }
+    }
     if(summary.groups?.length){
       ctx += `Orçamentos: ` + summary.groups.map(g=>`${g.name} gastou ${money(g.spent)} de ${money(g.budget)} (${g.percentage}%)`).join('; ') + '. ';
     }

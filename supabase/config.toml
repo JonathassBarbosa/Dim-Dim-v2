@@ -4,3 +4,16 @@ verify_jwt = true
 [functions.notification-dispatch]
 # Esta função é chamada pelo Cron. Ela valida o segredo CRON_SECRET no header.
 verify_jwt = false
+
+[functions.pluggy-connect-token]
+verify_jwt = true
+
+[functions.pluggy-register-item]
+verify_jwt = true
+
+[functions.pluggy-revoke-item]
+verify_jwt = true
+
+[functions.pluggy-webhook]
+# O Pluggy não envia JWT; a função valida PLUGGY_WEBHOOK_SECRET.
+verify_jwt = false

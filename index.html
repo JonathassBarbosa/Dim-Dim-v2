@@ -284,9 +284,57 @@
     </div>
     <button class="mais-opt" data-go="lista"><span class="quick-ic c1">📝</span><div><div class="mais-title">Lista</div><div class="mais-sub">Itens salvos para comprar</div></div></button>
     <button class="mais-opt" data-go="ocr"><span class="quick-ic c2">📷</span><div><div class="mais-title">Nota fiscal</div><div class="mais-sub">Leitura automática por OCR</div></div></button>
+    <button class="mais-opt" id="btnOpenFinance" type="button"><span class="quick-ic c1">🏦</span><div><div class="mais-title">Open Finance Beta</div><div class="mais-sub">Conecte suas instituições com consentimento</div></div></button>
   </div>
 </div>
 
+<div class="sheet-overlay" id="openFinanceOverlay">
+  <div class="sheet open-finance-sheet">
+    <div class="sheet-head">
+      <div>
+        <h2>Open Finance Beta</h2>
+        <p class="sec-sub">Cadastro e conexões financeiras protegidas</p>
+      </div>
+      <button class="sheet-close" id="btnCloseOpenFinance" type="button">✕</button>
+    </div>
+
+    <div class="open-finance-notice">
+      O DimDim não recebe sua senha bancária. A autenticação e o consentimento acontecem no ambiente seguro da instituição e do Pluggy.
+    </div>
+
+    <div class="seclabel">Dados cadastrais</div>
+    <label>Nome completo ou razão social</label>
+    <input class="field" id="ofName" autocomplete="name">
+    <label>Tipo de perfil</label>
+    <select class="field" id="ofProfileType">
+      <option value="personal">Pessoa física</option>
+      <option value="business">Pessoa jurídica</option>
+    </select>
+    <label>CPF ou CNPJ</label>
+    <input class="field" id="ofDocument" inputmode="numeric" autocomplete="off">
+    <div class="field-hint">O número completo é transformado em hash e não fica armazenado.</div>
+    <label>Telefone</label>
+    <input class="field" id="ofPhone" type="tel" autocomplete="tel">
+    <div class="open-finance-grid">
+      <div><label>Data de nascimento</label><input class="field" id="ofBirthDate" type="date"></div>
+      <div><label>UF</label><input class="field" id="ofState" maxlength="2" autocomplete="address-level1"></div>
+    </div>
+
+    <div class="open-finance-consents">
+      <label><input type="checkbox" id="ofAcceptTerms"> Aceito os Termos de Uso do DimDim.</label>
+      <label><input type="checkbox" id="ofAcceptPrivacy"> Li e aceito a Política de Privacidade.</label>
+      <label><input type="checkbox" id="ofAcceptBeta"> Autorizo a conexão beta e o tratamento dos dados financeiros escolhidos por mim.</label>
+    </div>
+    <button class="btn gh" id="btnSaveOpenFinanceProfile" type="button">Salvar cadastro</button>
+
+    <div class="seclabel">Instituições conectadas</div>
+    <div id="openFinanceConnections"></div>
+    <button class="btn" id="btnConnectPluggy" type="button">Conectar uma instituição</button>
+    <div class="open-finance-status" id="openFinanceStatus"></div>
+  </div>
+</div>
+
+<script src="https://cdn.pluggy.ai/pluggy-connect/v2.7.0/pluggy-connect.js"></script>
 <script type="module" src="js/app.js"></script>
 </body>
 </html>

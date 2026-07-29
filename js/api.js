@@ -86,6 +86,12 @@ export class DimDimApi {
         body: {}
       });
     }
+    if (action === 'resumoOpenFinance') {
+      return this.#request('/rest/v1/rpc/open_finance_summary', {
+        method: 'POST',
+        body: {}
+      });
+    }
     if (action === 'notificacoes') {
       const limit = Math.min(Number(params.limit) || 50, 100);
       const notifications = await this.#table('notifications', {
@@ -98,6 +104,17 @@ export class DimDimApi {
         query: 'select=in_app_enabled,push_enabled,daily_tip_enabled,low_balance_enabled,budget_alert_enabled,bill_due_enabled,daily_tip_time,low_balance_threshold,timezone&limit=1'
       });
       return { ok: true, preferences: rows[0] || null };
+    }
+    if (action === 'perfilOpenFinance') {
+      const [profiles, connections] = await Promise.all([
+        this.#table('profiles', {
+          query: 'select=name,profile_type,document_type,document_last_four,phone,birth_date,state,onboarding_completed_at,open_finance_beta_accepted_at&limit=1'
+        }),
+        this.#table('financial_connections', {
+          query: 'select=id,provider_item_id,institution_name,status,last_synced_at,error_message,created_at&order=created_at.desc'
+        })
+      ]);
+      return { ok: true, profile: profiles[0] || null, connections };
     }
     if (action === 'lista') {
       const items = await this.#table('shopping_list_items', {
@@ -182,6 +199,53 @@ export class DimDimApi {
         body
       });
       return { ok: true };
+    }
+    if (action === 'salvarPerfilOpenFinance') {
+      const profile = await this.#request('/rest/v1/rpc/save_open_finance_profile', {
+        method: 'POST',
+        body: {
+          p_name: payload.name,
+          p_profile_type: payload.profileType,
+          p_document: payload.document,
+          p_phone: payload.phone,
+          p_birth_date: payload.birthDate || null,
+          p_state: payload.state,
+          p_accept_terms: Boolean(payload.acceptTerms),
+          p_accept_privacy: Boolean(payload.acceptPrivacy),
+          p_accept_open_finance_beta: Boolean(payload.acceptOpenFinanceBeta)
+        }
+      });
+      await this.#table('open_finance_consents', {
+        method: 'POST',
+        query: 'on_conflict=user_id,provider,consent_type,terms_version,privacy_version',
+        prefer: 'resolution=merge-duplicates,return=minimal',
+        body: {
+          user_id: this.session.user.id,
+          provider: 'pluggy',
+          consent_type: 'data_sharing',
+          status: 'granted',
+          granted_at: new Date().toISOString(),
+          terms_version: '2026-07-30',
+          privacy_version: '2026-07-30',
+          metadata: { source: 'dimdim-onboarding' }
+        }
+      });
+      return { ok: true, profile };
+    }
+    if (action === 'criarTokenPluggy') {
+      return this.#request('/functions/v1/pluggy-connect-token', { method: 'POST', body: {} });
+    }
+    if (action === 'registrarItemPluggy') {
+      return this.#request('/functions/v1/pluggy-register-item', {
+        method: 'POST',
+        body: { itemId: payload.itemId }
+      });
+    }
+    if (action === 'revogarItemPluggy') {
+      return this.#request('/functions/v1/pluggy-revoke-item', {
+        method: 'POST',
+        body: { itemId: payload.itemId }
+      });
     }
     if (action === 'salvarPush') {
       const subscription = payload.subscription || {};
