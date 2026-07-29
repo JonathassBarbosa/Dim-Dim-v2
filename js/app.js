@@ -1,4 +1,4 @@
-import { DEFAULT_AI_KEY, GEMINI_MODEL, GROUPS as GRUPOS, STORAGE_KEYS as LS } from './config.js';
+import { GROUPS as GRUPOS, STORAGE_KEYS as LS } from './config.js';
 import { loadJSON, saveJSON } from './storage.js';
 import { DimDimApi } from './api.js';
 import { escapeHTML, localDateTime } from './dom.js';
@@ -10,7 +10,6 @@ let catalog=loadJSON(LS.catalog,[]),lastLocation=null,selectedPayment=null,saldo
 let investimentos=[];
 let aiMessages=[];
 let aiVoiceOn=loadJSON(LS.aiVoice, false);
-let aiApiKey = loadJSON(LS.aiKey, '') || DEFAULT_AI_KEY;
 let cats=[];
 let custos=[];
 let proventos=[];
@@ -141,13 +140,6 @@ document.getElementById('btnTrocarUrl').addEventListener('click', async ()=>{
   await testConnection();
   renderRegistro();
   refreshHero();
-});
-document.getElementById('btnTrocarApiKey').addEventListener('click', ()=>{
-  const nova = document.getElementById('trocarApiKeyInput').value.trim();
-  if(!nova){ toast('Cole a chave de API primeiro.'); return; }
-  aiApiKey = nova; saveJSON(LS.aiKey, aiApiKey);
-  document.getElementById('trocarApiKeyInput').value='';
-  toast('Chave de IA salva.');
 });
 
 /* ===================== BOAS-VINDAS (planilha própria por usuário) ===================== */
@@ -390,31 +382,12 @@ Inclua só as chaves que fizerem sentido pro que foi dito. Se o usuário pergunt
   }));
 
   try{
-    const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`, {
-      method:'POST',
-      headers:{
-        'Content-Type':'application/json',
-        'x-goog-api-key': aiApiKey
-      },
-      body: JSON.stringify({
-        system_instruction:{parts:[{text:systemPrompt}]},
-        contents: geminiContents,
-        tools:[{google_search:{}}]
-      })
+    const data = await api.post('gemini', {
+      systemInstruction: systemPrompt,
+      contents: geminiContents
     });
-    const data = await resp.json();
     thinking.remove();
     setBotThinking(false);
-    if(data.error){
-      if(data.error.code === 401 || data.error.code === 403 || /API key/i.test(data.error.message||'')){
-        aiMessages.pop();
-        renderAiBubble('bot','A chave de IA integrada não foi aceita pelo Gemini agora. Tenta de novo em instantes — se persistir, avise o desenvolvedor do app.');
-      } else {
-        aiMessages.pop();
-        renderAiBubble('bot', 'Erro da API: ' + data.error.message);
-      }
-      return;
-    }
     const parts = (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) || [];
     const textoResposta = parts.map(p=>p.text||'').join('\n').trim() || 'Não consegui responder agora.';
     processarRespostaTexto(textoResposta, false);
@@ -422,7 +395,7 @@ Inclua só as chaves que fizerem sentido pro que foi dito. Se o usuário pergunt
     thinking.remove();
     setBotThinking(false);
     aiMessages.pop();
-    renderAiBubble('bot', 'Não consegui falar com o servidor agora. Tenta de novo em instantes.');
+    renderAiBubble('bot', e.message || 'Não consegui falar com o servidor agora.');
   }
 }
 
