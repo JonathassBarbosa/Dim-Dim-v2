@@ -37,6 +37,14 @@ Deno.serve(async (request) => {
       })
     });
     const data = await response.json();
+    if (!response.ok) {
+      const message =
+        (typeof data?.error === 'string' && data.error) ||
+        data?.error?.message ||
+        data?.message ||
+        'O provedor de IA não conseguiu responder agora.';
+      return new Response(JSON.stringify({ error: message }), { status: response.status, headers });
+    }
     return new Response(JSON.stringify(data), { status: response.status, headers });
   } catch {
     return new Response(JSON.stringify({ error: 'Não foi possível consultar o Gemini.' }), { status: 500, headers });
