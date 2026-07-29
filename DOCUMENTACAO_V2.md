@@ -47,9 +47,12 @@ POST:
 
 Perguntas respondidas pelo modelo local ficam no aparelho. Quando o navegador não
 suporta WebGPU ou a pergunta exige pesquisa atual, o aplicativo usa o Gemini e
-envia o contexto financeiro necessário à resposta. O projeto mantém uma chave
-padrão no frontend por decisão do proprietário; para distribuição ampla,
-recomenda-se uma chave por usuário ou um proxy autenticado.
+envia o contexto financeiro necessário ao Apps Script. O backend encaminha a
+requisição ao Gemini usando `GEMINI_API_KEY`, armazenada nas propriedades privadas
+do script. A chave não é enviada ao navegador nem versionada no GitHub.
+
+Como a chave anterior já esteve no histórico público do repositório, ela deve ser
+desativada após a criação e configuração de uma nova chave.
 
 ## PWA
 
