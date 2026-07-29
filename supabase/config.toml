@@ -1,0 +1,6 @@
+[functions.gemini]
+verify_jwt = true
+
+[functions.notification-dispatch]
+# Esta função é chamada pelo Cron. Ela valida o segredo CRON_SECRET no header.
+verify_jwt = false
