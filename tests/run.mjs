@@ -72,6 +72,7 @@ const edgeFunction = fs.readFileSync(new URL('../supabase/functions/gemini/index
 assert.match(edgeFunction, /Deno\.env\.get\('GEMINI_API_KEY'\)/);
 assert.match(edgeFunction, /models\/gemini-3\.6-flash:generateContent/);
 assert.doesNotMatch(edgeFunction, /models\/gemini-2\.5-flash:generateContent/);
+assert.doesNotMatch(edgeFunction, /google_search/, 'O plano gratuito não deve usar Google Search grounding.');
 assert.doesNotMatch(edgeFunction, /AIza[A-Za-z0-9_-]{20,}/);
 
 const notificationFunction = fs.readFileSync(
