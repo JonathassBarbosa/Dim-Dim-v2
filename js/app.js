@@ -1,9 +1,11 @@
 import {
-  GROUPS as GRUPOS, STORAGE_KEYS as LS, SUPABASE_URL, SUPABASE_ANON_KEY
+  GROUPS as GRUPOS, STORAGE_KEYS as LS, SUPABASE_URL, SUPABASE_ANON_KEY,
+  VAPID_PUBLIC_KEY
 } from './config.js';
 import { loadJSON, saveJSON } from './storage.js';
 import { DimDimApi } from './api.js';
 import { escapeHTML, localDateTime } from './dom.js';
+import { createNotificationCenter } from './notifications.js';
 
 let BACKEND_URL = SUPABASE_URL || loadJSON(LS.supabaseUrl, '');
 let ANON_KEY = SUPABASE_ANON_KEY || loadJSON(LS.supabaseAnonKey, '');
@@ -19,6 +21,8 @@ let proventos=[];
 function uid(){return globalThis.crypto?.randomUUID?.() || ('i'+Math.random().toString(36).slice(2,10));}
 function money(n){return'R$ '+(Number(n)||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});}
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2400);}
+const notificationCenter=createNotificationCenter({api,money,toast,vapidPublicKey:VAPID_PUBLIC_KEY});
+notificationCenter.init();
 setTimeout(()=>{document.getElementById('splash').classList.add('fade');},3300);
 setTimeout(()=>{document.getElementById('splash').style.display='none';},3900);
 document.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=>go(b.dataset.go)));
@@ -55,7 +59,10 @@ function calcHealth(data){
 function renderHero(data){
   const val=document.getElementById('heroSaldo');
   val.textContent=saldoVisivel?money(data.saldoLivre):'R$ ••••••';
-  document.getElementById('heroSub').textContent=`Receita ${money(data.receita)} · Gastos ${money(data.gastoTotal)}`;
+  const commitments=Number(data.compromissos||0);
+  document.getElementById('heroSub').textContent=commitments>0
+    ? `Receita ${money(data.receita)} · Gastos ${money(data.gastoTotal)} · Compromissos ${money(commitments)}`
+    : `Receita ${money(data.receita)} · Gastos ${money(data.gastoTotal)}`;
   lastHeroData=data;
 
   const status = calcHealth(data);
@@ -84,7 +91,25 @@ function renderHero(data){
     insight.textContent='Entre na sua conta para ver seus dados reais.';
   }
 }
-async function refreshHero(){try{renderHero(await api.get('painel',{periodo:'mes'}));}catch(e){renderHero({receita:0,gastoTotal:0,saldoLivre:0,grupos:[]});}}
+async function refreshHero(){
+  try{
+    const summary=await api.get('resumoFinanceiro');
+    renderHero({
+      receita:Number(summary.income),
+      gastoTotal:Number(summary.spent),
+      saldoLivre:Number(summary.available),
+      compromissos:Number(summary.fixedCommitments)+Number(summary.pendingInstallments)+Number(summary.goalReserve),
+      grupos:(summary.groups||[]).map(group=>({
+        grupo:group.name,
+        gasto:Number(group.spent),
+        meta:Number(group.budget)
+      }))
+    });
+  }catch{
+    try{renderHero(await api.get('painel',{periodo:'mes'}));}
+    catch{renderHero({receita:0,gastoTotal:0,saldoLivre:0,grupos:[]});}
+  }
+}
 document.getElementById('btnToggleSaldo').addEventListener('click',()=>{saldoVisivel=!saldoVisivel;saveJSON(LS.saldoVisivel,saldoVisivel);if(lastHeroData)renderHero(lastHeroData);});
 async function syncCatalog(){if(!api.isAuthenticated())return;try{await api.post('salvarLista',{items:catalog});}catch(e){toast(e.message);}}
 async function loadCatalog(){if(!api.isAuthenticated())return;try{const data=await api.get('lista');catalog=data.items||[];saveJSON(LS.catalog,catalog);renderCatalog();}catch(e){toast(e.message);}}
@@ -108,7 +133,7 @@ function setBotThinking(on){
   if(headOuter) headOuter.classList.toggle('fast', on);
   setBotState(on ? 'thinking' : 'idle');
 }
-async function enviarCompra(items,paymentMethod){const now=localDateTime();const payload={purchaseId:uid(),date:now.date,time:now.time,location:lastLocation,paymentMethod,items:items.map(i=>({name:i.name,category:i.category||'Outros',qty:i.qty||1,price:i.price||0,inList:i.inList!==false}))};try{const data=await api.post('compra',payload);if(data.alertas?.length){triggerBudgetAlert(data.alertas);}else{setBotState('success',2200);}await Promise.all([refreshHero(),loadHistory()]);return data;}catch(e){toast(e.message||'Não consegui gravar no banco agora.');return null;}}
+async function enviarCompra(items,paymentMethod){const now=localDateTime();const payload={purchaseId:uid(),date:now.date,time:now.time,location:lastLocation,paymentMethod,items:items.map(i=>({name:i.name,category:i.category||'Outros',qty:i.qty||1,price:i.price||0,inList:i.inList!==false}))};try{const data=await api.post('compra',payload);if(data.alertas?.length){triggerBudgetAlert(data.alertas);}else{setBotState('success',2200);}await Promise.all([refreshHero(),loadHistory(),notificationCenter.refresh()]);return data;}catch(e){toast(e.message||'Não consegui gravar no banco agora.');return null;}}
 function triggerBudgetAlert(alertas){const overlay=document.getElementById('flashOverlay');overlay.classList.add('on');setTimeout(()=>overlay.classList.remove('on'),3000);playBeep();toast('Orçamento estourado em: '+alertas.map(a=>a.categoria).join(', '));setBotState('error',3000);}
 function playBeep(){try{const ctx=new (window.AudioContext||window.webkitAudioContext)();[0,0.35,0.7].forEach(t=>{const o=ctx.createOscillator();const g=ctx.createGain();o.type='square';o.frequency.value=880;o.connect(g);g.connect(ctx.destination);g.gain.setValueAtTime(0.0001,ctx.currentTime+t);g.gain.exponentialRampToValueAtTime(0.25,ctx.currentTime+t+0.02);g.gain.exponentialRampToValueAtTime(0.0001,ctx.currentTime+t+0.25);o.start(ctx.currentTime+t);o.stop(ctx.currentTime+t+0.3);});}catch(e){}}
 let history=[];let payHoje=null;
@@ -124,7 +149,7 @@ function applyConfig(data){cats=(data.categorias||[]).map(c=>({n:c.categoria,v:c
 function renderEditCats(){const box=document.getElementById('editCats');box.innerHTML='';cats.forEach((item,index)=>{const row=document.createElement('div');row.className='edit-row';row.innerHTML=`<input class="nm" value="${escapeHTML(item.n)}"><select>${GRUPOS.map(g=>`<option ${g===item.g?'selected':''}>${g}</option>`).join('')}</select><input class="vl" inputmode="decimal" value="${item.v}"><button class="remove-row" type="button">✕</button>`;row.querySelector('.nm').addEventListener('change',e=>item.n=e.target.value);row.querySelector('select').addEventListener('change',e=>item.g=e.target.value);row.querySelector('.vl').addEventListener('change',e=>item.v=parseFloat(e.target.value)||0);row.querySelector('.remove-row').addEventListener('click',()=>{cats.splice(index,1);renderEditCats();});box.appendChild(row);});const addBtn=document.createElement('button');addBtn.className='btn mut';addBtn.style.marginTop='6px';addBtn.textContent='Adicionar categoria';addBtn.addEventListener('click',()=>{cats.push({n:'Nova categoria',v:0,g:'Necessidade'});renderEditCats();});box.appendChild(addBtn);}
 function renderEditSimple(target,list,placeholder){const box=document.getElementById(target);box.innerHTML='';list.forEach((item,index)=>{const row=document.createElement('div');row.className='edit-row simple-edit';row.innerHTML=`<input class="nm" value="${escapeHTML(item.n)}"><input class="vl" inputmode="decimal" value="${item.v}"><button class="remove-row" type="button">✕</button>`;row.querySelector('.nm').addEventListener('change',e=>item.n=e.target.value);row.querySelector('.vl').addEventListener('change',e=>item.v=parseFloat(e.target.value)||0);row.querySelector('.remove-row').addEventListener('click',()=>{list.splice(index,1);renderEditSimple(target,list,placeholder);});box.appendChild(row);});const addBtn=document.createElement('button');addBtn.className='btn mut';addBtn.style.marginTop='6px';addBtn.textContent=placeholder;addBtn.addEventListener('click',()=>{list.push({n:'Novo item',v:0});renderEditSimple(target,list,placeholder);});box.appendChild(addBtn);}
 function renderRegistro(){renderEditCats();renderEditSimple('editCustos',custos,'Adicionar custo fixo');renderEditSimple('editProventos',proventos,'Adicionar provento');}
-document.getElementById('btnSaveRegistro').addEventListener('click',async()=>{const btn=document.getElementById('btnSaveRegistro');btn.textContent='Salvando...';btn.disabled=true;try{await api.post('salvarConfig',{categorias:cats,custosFixos:custos,proventos});toast('Mudanças salvas.');await refreshHero();}catch(e){toast(e.message);}btn.textContent='Salvar mudanças';btn.disabled=false;});
+document.getElementById('btnSaveRegistro').addEventListener('click',async()=>{const btn=document.getElementById('btnSaveRegistro');btn.textContent='Salvando...';btn.disabled=true;try{await api.post('salvarConfig',{categorias:cats,custosFixos:custos,proventos});toast('Mudanças salvas.');await Promise.all([refreshHero(),notificationCenter.refresh()]);}catch(e){toast(e.message);}btn.textContent='Salvar mudanças';btn.disabled=false;});
 refreshHero();
 // Teste de conexão automático ao iniciar (mostra na tela de Status)
 setTimeout(()=>{testConnection();},2400);
@@ -152,7 +177,7 @@ async function autenticarWelcome(createAccount = false){
     }
     document.getElementById('welcomeScreen').classList.remove('show');
     toast('Conta conectada!');
-    await Promise.all([testConnection(),loadCatalog(),refreshHero()]);
+    await Promise.all([testConnection(),loadCatalog(),refreshHero(),notificationCenter.refresh()]);
     if(createAccount) startOnboarding();
   }catch(e){
     status.innerHTML = `<span style="color:var(--red)">${escapeHTML(e.message)}</span>`;
@@ -160,9 +185,9 @@ async function autenticarWelcome(createAccount = false){
 }
 document.getElementById('btnWelcomeLogin').addEventListener('click',()=>autenticarWelcome(false));
 document.getElementById('btnWelcomeSignup').addEventListener('click',()=>autenticarWelcome(true));
-document.getElementById('btnLogout').addEventListener('click',async()=>{await api.signOut();document.getElementById('registroOverlay').classList.remove('open');document.getElementById('welcomeScreen').classList.add('show');toast('Sessão encerrada.');});
+document.getElementById('btnLogout').addEventListener('click',async()=>{await api.signOut();document.getElementById('registroOverlay').classList.remove('open');document.getElementById('welcomeScreen').classList.add('show');await notificationCenter.refresh({generate:false});toast('Sessão encerrada.');});
 if(!api.isAuthenticated()){ document.getElementById('welcomeScreen').classList.add('show'); }
-else { loadCatalog(); }
+else { loadCatalog(); notificationCenter.refresh(); }
 if(api.isConfigured()){document.getElementById('supabaseSetupFields').style.display='none';}
 
 /* ===================== AGENTE DE IA (texto, voz e onboarding) ===================== */
@@ -196,6 +221,7 @@ function renderAiConfigCard(cfg){
   if(cfg.proventos) linhas.push(`Receitas: ${cfg.proventos.map(p=>p.n+' ('+money(p.v)+')').join(', ')}`);
   if(cfg.custosFixos) linhas.push(`Custos fixos: ${cfg.custosFixos.map(p=>p.n+' ('+money(p.v)+')').join(', ')}`);
   if(cfg.investimentos) linhas.push(`Investimentos: ${cfg.investimentos.map(p=>p.nome+' — '+p.tipo+' ('+money(p.valor)+', '+p.taxa+'% a.a.)').join(', ')}`);
+  if(cfg.metas) linhas.push(`Metas: ${cfg.metas.map(p=>p.nome+' (objetivo '+money(p.objetivo)+', reserva mensal '+money(p.mensal)+')').join(', ')}`);
   const title = document.createElement('b');
   title.textContent = 'Detectei estas informações:';
   const preview = document.createElement('pre');
@@ -209,6 +235,7 @@ function renderAiConfigCard(cfg){
       if(cfg.proventos){ proventos = cfg.proventos; await api.post('proventos',{itens:proventos}); }
       if(cfg.custosFixos){ custos = cfg.custosFixos; await api.post('custosFixos',{itens:custos}); }
       if(cfg.investimentos){ investimentos = cfg.investimentos; await api.post('investimentos',{itens:cfg.investimentos}); }
+      if(cfg.metas){ await api.post('metas',{itens:cfg.metas}); }
       btn.textContent = '✓ Salvo';
       toast('Configuração salva!');
       refreshHero();
@@ -229,24 +256,32 @@ function falarTexto(texto){
 async function buscarContextoFinanceiro(){
   if(!api.isAuthenticated()) return 'O usuário ainda não entrou na conta.';
   try{
-    const [painelResp, investResp] = await Promise.all([api.get('painel',{periodo:'mes'}),api.get('investimentos')]);
-    let ctx = '';
-    if(painelResp && painelResp.ok){
-      ctx += `Receita mensal: ${money(painelResp.receita)}. Gasto total: ${money(painelResp.gastoTotal)}. Saldo livre: ${money(painelResp.saldoLivre)}. `;
-      ctx += `Regra 50-30-20: ` + painelResp.grupos.map(g=>`${g.grupo} gastou ${money(g.gasto)} de meta ${money(g.meta)}`).join('; ') + '. ';
+    const [summary, investResp, goalResp] = await Promise.all([api.get('resumoFinanceiro'),api.get('investimentos'),api.get('metas')]);
+    let ctx = `Resumo calculado pelo banco para ${summary.referenceMonth}: receita ${money(summary.income)}; gastos já registrados ${money(summary.spent)}; custos fixos planejados ${money(summary.fixedCommitments)}; parcelas pendentes no mês ${money(summary.pendingInstallments)}; reserva para metas ${money(summary.goalReserve)}; valor realmente disponível até o fim do mês ${money(summary.available)}; limite seguro por dia ${money(summary.safeDaily)}; faltam ${summary.remainingDays} dias. `;
+    if(summary.groups?.length){
+      ctx += `Orçamentos: ` + summary.groups.map(g=>`${g.name} gastou ${money(g.spent)} de ${money(g.budget)} (${g.percentage}%)`).join('; ') + '. ';
     }
     if(investResp && investResp.ok && investResp.investimentos.length){
       ctx += `Investimentos atuais: ` + investResp.investimentos.map(i=>`${i.nome} (${i.tipo}, ${money(i.valor)}, taxa ${i.taxa}% a.a., atualizado em ${i.atualizadoEm})`).join('; ') + '. ';
     }
+    if(goalResp && goalResp.ok && goalResp.metas.length){
+      ctx += `Metas financeiras: ` + goalResp.metas.map(g=>`${g.nome}: ${money(g.atual)} de ${money(g.objetivo)}, reservando ${money(g.mensal)} por mês`).join('; ') + '. ';
+    }
     return ctx || 'Sem dados financeiros ainda — banco conectado mas vazio.';
-  }catch(e){ return 'Não consegui buscar os dados financeiros agora.'; }
+  }catch{
+    try{
+      const painel=await api.get('painel',{periodo:'mes'});
+      return `Receita mensal: ${money(painel.receita)}. Gastos registrados: ${money(painel.gastoTotal)}. Saldo simples: ${money(painel.saldoLivre)}.`;
+    }catch{
+      return 'Não consegui buscar os dados financeiros agora.';
+    }
+  }
 }
 
-function processarRespostaTexto(textoResposta, origemLocal){
+function processarRespostaTexto(textoResposta){
   const match = textoResposta.match(/```dimdim-config\s*([\s\S]*?)```/);
   const textoLimpo = textoResposta.replace(/```dimdim-config[\s\S]*?```/, '').trim();
-  const bubble = renderAiBubble('bot', textoLimpo || textoResposta);
-  if(origemLocal) marcarOrigemLocal(bubble);
+  renderAiBubble('bot', textoLimpo || textoResposta);
   aiMessages.push({role:'assistant', content:textoResposta});
   falarTexto(textoLimpo || textoResposta);
   if(match){
@@ -278,10 +313,10 @@ async function enviarParaGemini(texto){
   setBotThinking(true);
 
   const contexto = await buscarContextoFinanceiro();
-  const systemPrompt = `Você é o assistente financeiro do app DimDim, conversando em português do Brasil, direto e amigável, respostas curtas (poucos parágrafos). Contexto financeiro atual do usuário: ${contexto}
+  const systemPrompt = `Você é o assistente financeiro do app DimDim, conversando em português do Brasil, direto e amigável, respostas curtas (poucos parágrafos). Os valores do contexto abaixo foram calculados pelo PostgreSQL: use-os como fonte de verdade, não refaça as contas e não invente valores ausentes. Contexto financeiro atual do usuário: ${contexto}
 Se o usuário estiver te contando receita, custos fixos, gastos de cartão, dívidas ou investimentos (onboarding inicial), depois de entender o suficiente, responda normalmente E inclua ao final um bloco de código no formato:
 \`\`\`dimdim-config
-{"proventos":[{"n":"Nome","v":1000}],"custosFixos":[{"n":"Nome","v":500}],"investimentos":[{"nome":"Nome","tipo":"Tipo","valor":1000,"taxa":10.5}]}
+{"proventos":[{"n":"Nome","v":1000}],"custosFixos":[{"n":"Nome","v":500}],"investimentos":[{"nome":"Nome","tipo":"Tipo","valor":1000,"taxa":10.5}],"metas":[{"nome":"Reserva de emergência","objetivo":10000,"atual":1000,"mensal":500,"data":"2027-12-31"}]}
 \`\`\`
 Inclua só as chaves que fizerem sentido pro que foi dito. Se o usuário perguntar sobre rentabilidade de algum investimento (CDB, Tesouro, poupança, fundos etc.), use a busca do Google pra achar a taxa atual antes de responder.`;
 
@@ -299,7 +334,7 @@ Inclua só as chaves que fizerem sentido pro que foi dito. Se o usuário pergunt
     setBotThinking(false);
     const parts = (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) || [];
     const textoResposta = parts.map(p=>p.text||'').join('\n').trim() || 'Não consegui responder agora.';
-    processarRespostaTexto(textoResposta, false);
+    processarRespostaTexto(textoResposta);
   }catch(e){
     thinking.remove();
     setBotThinking(false);
@@ -320,7 +355,7 @@ document.getElementById('aiInput').addEventListener('keydown', (e)=>{
 function startOnboarding(){
   aiMessages = [];
   document.getElementById('aiMsgs').innerHTML = '';
-  const msg = 'Oi! Sou o assistente do DimDim 👋 Vamos configurar tudo rapidinho? Me conta: qual sua receita mensal, seus custos fixos (aluguel, contas), gastos de cartão de crédito (e se ainda tem parcelas), outras dívidas, e se você tem investimentos (me diga o tipo, valor e — se souber — a taxa). Pode mandar tudo em uma mensagem só ou aos poucos, como preferir.';
+  const msg = 'Oi! Sou o assistente do DimDim 👋 Vamos configurar tudo rapidinho? Me conta: qual sua receita mensal, seus custos fixos (aluguel, contas), gastos de cartão de crédito e parcelas, outras dívidas, investimentos e metas financeiras — incluindo quanto quer guardar por mês. Pode mandar tudo em uma mensagem só ou aos poucos.';
   renderAiBubble('bot', msg);
   aiMessages.push({role:'assistant', content:msg});
   openAi();
@@ -357,5 +392,11 @@ if('serviceWorker'in navigator){
     refrescando = true;
     window.location.reload();
   });
+  navigator.serviceWorker.addEventListener('message', event=>{
+    if(event.data?.type==='OPEN_NOTIFICATIONS') notificationCenter.open();
+  });
   window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
+}
+if(window.location.hash==='#notifications'){
+  setTimeout(()=>notificationCenter.open(),4000);
 }
