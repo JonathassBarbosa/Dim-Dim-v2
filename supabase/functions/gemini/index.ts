@@ -32,8 +32,7 @@ Deno.serve(async (request) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: String(payload.systemInstruction || '') }] },
-        contents: Array.isArray(payload.contents) ? payload.contents : [],
-        tools: [{ google_search: {} }]
+        contents: Array.isArray(payload.contents) ? payload.contents : []
       })
     });
     const data = await response.json();
