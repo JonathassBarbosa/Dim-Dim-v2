@@ -1,11 +1,13 @@
-import { GROUPS as GRUPOS, STORAGE_KEYS as LS } from './config.js';
+import {
+  GROUPS as GRUPOS, STORAGE_KEYS as LS, SUPABASE_URL, SUPABASE_ANON_KEY
+} from './config.js';
 import { loadJSON, saveJSON } from './storage.js';
 import { DimDimApi } from './api.js';
 import { escapeHTML, localDateTime } from './dom.js';
 
-let SCRIPT_URL = loadJSON(LS.scriptUrl, '');
-let API_TOKEN = loadJSON(LS.apiToken, '');
-const api = new DimDimApi(SCRIPT_URL, API_TOKEN);
+let BACKEND_URL = SUPABASE_URL || loadJSON(LS.supabaseUrl, '');
+let ANON_KEY = SUPABASE_ANON_KEY || loadJSON(LS.supabaseAnonKey, '');
+const api = new DimDimApi(BACKEND_URL, ANON_KEY);
 let catalog=loadJSON(LS.catalog,[]),lastLocation=null,selectedPayment=null,saldoVisivel=loadJSON(LS.saldoVisivel,true),lastHeroData=null;
 let investimentos=[];
 let aiMessages=[];
@@ -78,14 +80,16 @@ function renderHero(data){
     else if(pct>=70) insight.textContent=`Você já usou ${pct}% da meta de ${pior.grupo} este mês.`;
     else insight.textContent='Suas finanças estão saudáveis este mês.';
   } else{
-    insight.textContent='Configure a planilha em Registro para ver seus dados reais.';
+    insight.textContent='Entre na sua conta para ver seus dados reais.';
   }
 }
 async function refreshHero(){try{renderHero(await api.get('painel',{periodo:'mes'}));}catch(e){renderHero({receita:0,gastoTotal:0,saldoLivre:0,grupos:[]});}}
 document.getElementById('btnToggleSaldo').addEventListener('click',()=>{saldoVisivel=!saldoVisivel;saveJSON(LS.saldoVisivel,saldoVisivel);if(lastHeroData)renderHero(lastHeroData);});
-document.getElementById('btnAdd').addEventListener('click',()=>{const raw=document.getElementById('paste').value.trim();if(!raw){toast('Cole ou digite algum item primeiro.');return;}raw.split('\n').map(l=>l.trim()).filter(Boolean).forEach(line=>{const separator=line.includes(';')?';':',';const parts=line.split(separator).map(p=>p.trim());const name=parts[0];if(!name)return;const category=parts[1]||'Outros';const priceText=separator===','&&parts.length>3?parts.slice(2).join('.'):parts[2];let price=priceText?parseFloat(priceText.replace(',','.')):0;if(isNaN(price))price=0;const existing=catalog.find(i=>i.name.toLowerCase()===name.toLowerCase());if(existing){existing.checked=true;existing.category=category;if(price)existing.price=price;}else{catalog.push({id:uid(),name,category,price,checked:true,timesUsed:0});}});document.getElementById('paste').value='';saveJSON(LS.catalog,catalog);renderCatalog();toast('Item adicionado.');});
-function renderCatalog(){const box=document.getElementById('catalog');box.innerHTML='';if(catalog.length===0){box.innerHTML='<div class="empty">Sua lista está vazia. Adicione itens acima.</div>';return;}catalog.forEach(item=>{const row=document.createElement('div');row.className='row'+(item.checked?' on':'');row.innerHTML=`<button class="chk" type="button" aria-label="Marcar ${escapeHTML(item.name)}">${item.checked?'✓':''}</button><div class="r-name">${escapeHTML(item.name)}<div class="r-meta">${escapeHTML(item.category)}${item.timesUsed>0?' · comprado '+item.timesUsed+'x':''}</div></div><div class="r-price">${money(item.price)}</div><button class="item-edit" type="button" aria-label="Editar">✎</button><button class="item-delete" type="button" aria-label="Excluir">✕</button>`;row.querySelector('.chk').addEventListener('click',()=>{item.checked=!item.checked;saveJSON(LS.catalog,catalog);renderCatalog();});row.querySelector('.item-edit').addEventListener('click',()=>editCatalogItem(item));row.querySelector('.item-delete').addEventListener('click',()=>{if(confirm(`Excluir ${item.name}?`)){catalog=catalog.filter(current=>current.id!==item.id);saveJSON(LS.catalog,catalog);renderCatalog();}});box.appendChild(row);});}
-function editCatalogItem(item){const name=prompt('Nome do item:',item.name);if(name===null||!name.trim())return;const category=prompt('Categoria:',item.category);if(category===null)return;const price=prompt('Preço:',String(item.price).replace('.',','));if(price===null)return;item.name=name.trim();item.category=category.trim()||'Outros';item.price=Number(String(price).replace(',','.'))||0;saveJSON(LS.catalog,catalog);renderCatalog();}
+async function syncCatalog(){if(!api.isAuthenticated())return;try{await api.post('salvarLista',{items:catalog});}catch(e){toast(e.message);}}
+async function loadCatalog(){if(!api.isAuthenticated())return;try{const data=await api.get('lista');catalog=data.items||[];saveJSON(LS.catalog,catalog);renderCatalog();}catch(e){toast(e.message);}}
+document.getElementById('btnAdd').addEventListener('click',()=>{const raw=document.getElementById('paste').value.trim();if(!raw){toast('Cole ou digite algum item primeiro.');return;}raw.split('\n').map(l=>l.trim()).filter(Boolean).forEach(line=>{const separator=line.includes(';')?';':',';const parts=line.split(separator).map(p=>p.trim());const name=parts[0];if(!name)return;const category=parts[1]||'Outros';const priceText=separator===','&&parts.length>3?parts.slice(2).join('.'):parts[2];let price=priceText?parseFloat(priceText.replace(',','.')):0;if(isNaN(price))price=0;const existing=catalog.find(i=>i.name.toLowerCase()===name.toLowerCase());if(existing){existing.checked=true;existing.category=category;if(price)existing.price=price;}else{catalog.push({id:uid(),name,category,price,checked:true,timesUsed:0});}});document.getElementById('paste').value='';saveJSON(LS.catalog,catalog);renderCatalog();syncCatalog();toast('Item adicionado.');});
+function renderCatalog(){const box=document.getElementById('catalog');box.innerHTML='';if(catalog.length===0){box.innerHTML='<div class="empty">Sua lista está vazia. Adicione itens acima.</div>';return;}catalog.forEach(item=>{const row=document.createElement('div');row.className='row'+(item.checked?' on':'');row.innerHTML=`<button class="chk" type="button" aria-label="Marcar ${escapeHTML(item.name)}">${item.checked?'✓':''}</button><div class="r-name">${escapeHTML(item.name)}<div class="r-meta">${escapeHTML(item.category)}${item.timesUsed>0?' · comprado '+item.timesUsed+'x':''}</div></div><div class="r-price">${money(item.price)}</div><button class="item-edit" type="button" aria-label="Editar">✎</button><button class="item-delete" type="button" aria-label="Excluir">✕</button>`;row.querySelector('.chk').addEventListener('click',()=>{item.checked=!item.checked;saveJSON(LS.catalog,catalog);renderCatalog();syncCatalog();});row.querySelector('.item-edit').addEventListener('click',()=>editCatalogItem(item));row.querySelector('.item-delete').addEventListener('click',()=>{if(confirm(`Excluir ${item.name}?`)){catalog=catalog.filter(current=>current.id!==item.id);saveJSON(LS.catalog,catalog);renderCatalog();syncCatalog();}});box.appendChild(row);});}
+function editCatalogItem(item){const name=prompt('Nome do item:',item.name);if(name===null||!name.trim())return;const category=prompt('Categoria:',item.category);if(category===null)return;const price=prompt('Preço:',String(item.price).replace('.',','));if(price===null)return;item.name=name.trim();item.category=category.trim()||'Outros';item.price=Number(String(price).replace(',','.'))||0;saveJSON(LS.catalog,catalog);renderCatalog();syncCatalog();}
 renderCatalog();
 document.getElementById('fileInput').addEventListener('change',async(e)=>{const file=e.target.files[0];if(!file)return;const progress=document.getElementById('ocrProgress');const label=document.getElementById('ocrDropLabel');label.textContent='Lendo a nota...';progress.innerHTML='<div class="empty">Isso pode levar alguns segundos.</div>';try{const {data:{text}}=await Tesseract.recognize(file,'por');label.textContent='Fotografar ou enviar outra nota';progress.innerHTML='';processarTextoNota(text);}catch(err){progress.innerHTML='<div class="warn">Não consegui ler essa imagem. Tente uma foto mais nítida.</div>';label.textContent='Fotografe a nota ou escolha um arquivo';}});
 function processarTextoNota(text){const linhas=text.split('\n').map(l=>l.trim()).filter(Boolean);const itens=[];const regexPreco=/(\d{1,4}[.,]\d{2})\s*$/;linhas.forEach(linha=>{const m=linha.match(regexPreco);if(!m)return;const preco=parseFloat(m[1].replace(',','.'));let nome=linha.slice(0,m.index).trim();let qtd=1;const qm=nome.match(/^(\d+)\s*[xX]?\s+/);if(qm){qtd=parseInt(qm[1],10);nome=nome.slice(qm[0].length).trim();}nome=nome.replace(/^\d+\s*/,'').trim();if(nome.length<2)return;itens.push({name:nome,qty:qtd,price:preco});});renderOcrResult(itens);}
@@ -103,7 +107,7 @@ function setBotThinking(on){
   if(headOuter) headOuter.classList.toggle('fast', on);
   setBotState(on ? 'thinking' : 'idle');
 }
-async function enviarCompra(items,paymentMethod){const now=localDateTime();const payload={purchaseId:uid(),date:now.date,time:now.time,location:lastLocation,paymentMethod,items:items.map(i=>({name:i.name,category:i.category||'Outros',qty:i.qty||1,price:i.price||0,inList:i.inList!==false}))};try{const data=await api.post('compra',payload);if(data.alertas?.length){triggerBudgetAlert(data.alertas);}else{setBotState('success',2200);}await Promise.all([refreshHero(),loadHistory()]);return data;}catch(e){toast(e.message||'Não consegui enviar para a planilha agora.');return null;}}
+async function enviarCompra(items,paymentMethod){const now=localDateTime();const payload={purchaseId:uid(),date:now.date,time:now.time,location:lastLocation,paymentMethod,items:items.map(i=>({name:i.name,category:i.category||'Outros',qty:i.qty||1,price:i.price||0,inList:i.inList!==false}))};try{const data=await api.post('compra',payload);if(data.alertas?.length){triggerBudgetAlert(data.alertas);}else{setBotState('success',2200);}await Promise.all([refreshHero(),loadHistory()]);return data;}catch(e){toast(e.message||'Não consegui gravar no banco agora.');return null;}}
 function triggerBudgetAlert(alertas){const overlay=document.getElementById('flashOverlay');overlay.classList.add('on');setTimeout(()=>overlay.classList.remove('on'),3000);playBeep();toast('Orçamento estourado em: '+alertas.map(a=>a.categoria).join(', '));setBotState('error',3000);}
 function playBeep(){try{const ctx=new (window.AudioContext||window.webkitAudioContext)();[0,0.35,0.7].forEach(t=>{const o=ctx.createOscillator();const g=ctx.createGain();o.type='square';o.frequency.value=880;o.connect(g);g.connect(ctx.destination);g.gain.setValueAtTime(0.0001,ctx.currentTime+t);g.gain.exponentialRampToValueAtTime(0.25,ctx.currentTime+t+0.02);g.gain.exponentialRampToValueAtTime(0.0001,ctx.currentTime+t+0.25);o.start(ctx.currentTime+t);o.stop(ctx.currentTime+t+0.3);});}catch(e){}}
 let history=[];let payHoje=null;
@@ -119,55 +123,46 @@ function applyConfig(data){cats=(data.categorias||[]).map(c=>({n:c.categoria,v:c
 function renderEditCats(){const box=document.getElementById('editCats');box.innerHTML='';cats.forEach((item,index)=>{const row=document.createElement('div');row.className='edit-row';row.innerHTML=`<input class="nm" value="${escapeHTML(item.n)}"><select>${GRUPOS.map(g=>`<option ${g===item.g?'selected':''}>${g}</option>`).join('')}</select><input class="vl" inputmode="decimal" value="${item.v}"><button class="remove-row" type="button">✕</button>`;row.querySelector('.nm').addEventListener('change',e=>item.n=e.target.value);row.querySelector('select').addEventListener('change',e=>item.g=e.target.value);row.querySelector('.vl').addEventListener('change',e=>item.v=parseFloat(e.target.value)||0);row.querySelector('.remove-row').addEventListener('click',()=>{cats.splice(index,1);renderEditCats();});box.appendChild(row);});const addBtn=document.createElement('button');addBtn.className='btn mut';addBtn.style.marginTop='6px';addBtn.textContent='Adicionar categoria';addBtn.addEventListener('click',()=>{cats.push({n:'Nova categoria',v:0,g:'Necessidade'});renderEditCats();});box.appendChild(addBtn);}
 function renderEditSimple(target,list,placeholder){const box=document.getElementById(target);box.innerHTML='';list.forEach((item,index)=>{const row=document.createElement('div');row.className='edit-row simple-edit';row.innerHTML=`<input class="nm" value="${escapeHTML(item.n)}"><input class="vl" inputmode="decimal" value="${item.v}"><button class="remove-row" type="button">✕</button>`;row.querySelector('.nm').addEventListener('change',e=>item.n=e.target.value);row.querySelector('.vl').addEventListener('change',e=>item.v=parseFloat(e.target.value)||0);row.querySelector('.remove-row').addEventListener('click',()=>{list.splice(index,1);renderEditSimple(target,list,placeholder);});box.appendChild(row);});const addBtn=document.createElement('button');addBtn.className='btn mut';addBtn.style.marginTop='6px';addBtn.textContent=placeholder;addBtn.addEventListener('click',()=>{list.push({n:'Novo item',v:0});renderEditSimple(target,list,placeholder);});box.appendChild(addBtn);}
 function renderRegistro(){renderEditCats();renderEditSimple('editCustos',custos,'Adicionar custo fixo');renderEditSimple('editProventos',proventos,'Adicionar provento');}
-document.getElementById('btnSaveRegistro').addEventListener('click',async()=>{const btn=document.getElementById('btnSaveRegistro');btn.textContent='Salvando...';btn.disabled=true;try{await api.post('salvarConfig',{categorias:cats,custosFixos:custos,proventos});toast('Mudanças salvas na planilha.');await refreshHero();}catch(e){toast(e.message);}btn.textContent='Salvar mudanças na planilha';btn.disabled=false;});
+document.getElementById('btnSaveRegistro').addEventListener('click',async()=>{const btn=document.getElementById('btnSaveRegistro');btn.textContent='Salvando...';btn.disabled=true;try{await api.post('salvarConfig',{categorias:cats,custosFixos:custos,proventos});toast('Mudanças salvas.');await refreshHero();}catch(e){toast(e.message);}btn.textContent='Salvar mudanças';btn.disabled=false;});
 refreshHero();
 // Teste de conexão automático ao iniciar (mostra na tela de Status)
 setTimeout(()=>{testConnection();},2400);
 
-/* ===================== TROCAR PLANILHA (dentro de Status) ===================== */
-document.getElementById('btnTrocarUrl').addEventListener('click', async ()=>{
-  const nova = document.getElementById('trocarUrlInput').value.trim();
-  const token = document.getElementById('trocarTokenInput').value.trim();
-  if(!nova || !token){ toast('Informe a URL e o token de acesso.'); return; }
-  SCRIPT_URL = nova;
-  API_TOKEN = token;
-  api.configure(SCRIPT_URL, API_TOKEN);
-  saveJSON(LS.scriptUrl, SCRIPT_URL);
-  saveJSON(LS.apiToken, API_TOKEN);
-  document.getElementById('trocarUrlInput').value='';
-  document.getElementById('trocarTokenInput').value='';
-  toast('Planilha atualizada.');
-  await testConnection();
-  renderRegistro();
-  refreshHero();
-});
-
-/* ===================== BOAS-VINDAS (planilha própria por usuário) ===================== */
-async function tentarConectarWelcome(){
-  const url = document.getElementById('welcomeUrlInput').value.trim();
-  const token = document.getElementById('welcomeTokenInput').value.trim();
+/* ===================== AUTENTICAÇÃO SUPABASE ===================== */
+async function autenticarWelcome(createAccount = false){
+  const setupUrl = document.getElementById('welcomeSupabaseUrl').value.trim();
+  const setupKey = document.getElementById('welcomeSupabaseKey').value.trim();
+  const name = document.getElementById('welcomeNameInput').value.trim();
+  const email = document.getElementById('welcomeEmailInput').value.trim();
+  const password = document.getElementById('welcomePasswordInput').value;
   const status = document.getElementById('welcomeStatus');
-  if(!url || !token){ status.innerHTML='<span style="color:var(--red)">Informe a URL e o token.</span>'; return; }
-  status.innerHTML = '🔄 Testando...';
+  if(!email || password.length < 6){ status.innerHTML='<span style="color:var(--red)">Informe o e-mail e uma senha com pelo menos 6 caracteres.</span>'; return; }
+  status.innerHTML = createAccount ? '🔄 Criando conta...' : '🔄 Entrando...';
   try{
-    api.configure(url, token);
-    const data = await api.get('config');
-    SCRIPT_URL = url;
-    API_TOKEN = token;
-    saveJSON(LS.scriptUrl, SCRIPT_URL);
-    saveJSON(LS.apiToken, API_TOKEN);
-    applyConfig(data);
+    if(setupUrl || setupKey){
+      if(!setupUrl || !setupKey) throw new Error('Informe a URL e a chave pública do Supabase.');
+      BACKEND_URL=setupUrl;ANON_KEY=setupKey;api.configure(BACKEND_URL,ANON_KEY);
+      saveJSON(LS.supabaseUrl,BACKEND_URL);saveJSON(LS.supabaseAnonKey,ANON_KEY);
+    }
+    const data = createAccount ? await api.signUp(email,password,name) : await api.signIn(email,password);
+    if(!data.access_token){
+      status.innerHTML='<span style="color:var(--gd)">Conta criada. Confirme o e-mail e depois entre.</span>';
+      return;
+    }
     document.getElementById('welcomeScreen').classList.remove('show');
-    toast('Planilha conectada!');
-    refreshHero();
-    startOnboarding();
+    toast('Conta conectada!');
+    await Promise.all([testConnection(),loadCatalog(),refreshHero()]);
+    if(createAccount) startOnboarding();
   }catch(e){
-    api.configure(SCRIPT_URL, API_TOKEN);
     status.innerHTML = `<span style="color:var(--red)">${escapeHTML(e.message)}</span>`;
   }
 }
-document.getElementById('btnWelcomeConnect').addEventListener('click', tentarConectarWelcome);
-if(!api.isConfigured()){ document.getElementById('welcomeScreen').classList.add('show'); }
+document.getElementById('btnWelcomeLogin').addEventListener('click',()=>autenticarWelcome(false));
+document.getElementById('btnWelcomeSignup').addEventListener('click',()=>autenticarWelcome(true));
+document.getElementById('btnLogout').addEventListener('click',async()=>{await api.signOut();document.getElementById('registroOverlay').classList.remove('open');document.getElementById('welcomeScreen').classList.add('show');toast('Sessão encerrada.');});
+if(!api.isAuthenticated()){ document.getElementById('welcomeScreen').classList.add('show'); }
+else { loadCatalog(); }
+if(api.isConfigured()){document.getElementById('supabaseSetupFields').style.display='none';}
 
 /* ===================== AGENTE DE IA (texto, voz e onboarding) ===================== */
 function openAi(){ document.getElementById('aiOverlay').classList.add('open'); document.getElementById('aiInput').focus(); }
@@ -206,14 +201,14 @@ function renderAiConfigCard(cfg){
   preview.textContent = linhas.join('\n');
   el.append(title, preview);
   const btn = document.createElement('button');
-  btn.className = 'btn'; btn.style.marginTop='4px'; btn.textContent = 'Confirmar e salvar na planilha';
+  btn.className = 'btn'; btn.style.marginTop='4px'; btn.textContent = 'Confirmar e salvar';
   btn.addEventListener('click', async ()=>{
     btn.textContent = 'Salvando...'; btn.disabled = true;
     try{
       if(cfg.proventos){ proventos = cfg.proventos; await api.post('proventos',{itens:proventos}); }
       if(cfg.custosFixos){ custos = cfg.custosFixos; await api.post('custosFixos',{itens:custos}); }
       if(cfg.investimentos){ investimentos = cfg.investimentos; await api.post('investimentos',{itens:cfg.investimentos}); }
-      btn.textContent = '✓ Salvo na planilha';
+      btn.textContent = '✓ Salvo';
       toast('Configuração salva!');
       refreshHero();
     }catch(e){ btn.textContent = 'Erro ao salvar, tentar de novo'; btn.disabled = false; }
@@ -231,7 +226,7 @@ function falarTexto(texto){
 }
 
 async function buscarContextoFinanceiro(){
-  if(!api.isConfigured()) return 'O usuário ainda não conectou nenhuma planilha.';
+  if(!api.isAuthenticated()) return 'O usuário ainda não entrou na conta.';
   try{
     const [painelResp, investResp] = await Promise.all([api.get('painel',{periodo:'mes'}),api.get('investimentos')]);
     let ctx = '';
@@ -242,7 +237,7 @@ async function buscarContextoFinanceiro(){
     if(investResp && investResp.ok && investResp.investimentos.length){
       ctx += `Investimentos atuais: ` + investResp.investimentos.map(i=>`${i.nome} (${i.tipo}, ${money(i.valor)}, taxa ${i.taxa}% a.a., atualizado em ${i.atualizadoEm})`).join('; ') + '. ';
     }
-    return ctx || 'Sem dados financeiros ainda — planilha conectada mas vazia.';
+    return ctx || 'Sem dados financeiros ainda — banco conectado mas vazio.';
   }catch(e){ return 'Não consegui buscar os dados financeiros agora.'; }
 }
 

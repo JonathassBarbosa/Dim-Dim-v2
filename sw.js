@@ -1,4 +1,4 @@
-const CACHE = 'dimdim-v12';
+const CACHE = 'dimdim-v13-supabase';
 const ASSETS = [
   './', './index.html', './manifest.json', './assets/app.css', './assets/dimdim-logo.svg',
   './js/app.js', './js/api.js', './js/config.js', './js/dom.js', './js/storage.js',
@@ -24,7 +24,7 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
-  if (url.hostname.includes('script.google.com') || event.request.method !== 'GET') return;
+  if (url.hostname.includes('supabase.co') || event.request.method !== 'GET') return;
 
   // navegação (index.html): sempre tenta a rede primeiro, cai pro cache só se offline
   if (event.request.mode === 'navigate') {

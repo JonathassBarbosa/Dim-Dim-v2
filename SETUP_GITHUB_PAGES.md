@@ -1,31 +1,32 @@
-# Publicação do DimDim
+# Publicação gratuita: Supabase + GitHub Pages
 
-## GitHub Pages
+## 1. Criar o banco
 
-1. Abra **Settings → Pages** no repositório.
-2. Selecione a branch `main` e a pasta raiz.
-3. Salve e aguarde a publicação.
+1. Crie um projeto no plano Free do Supabase.
+2. Abra **SQL Editor**.
+3. Execute `supabase/migrations/202607280001_initial_schema.sql`.
+4. Em **Authentication → URL Configuration**, use como Site URL e Redirect URL:
+   `https://jonathassbarbosa.github.io/Dim-Dim-v2/`.
 
-## Google Sheets e Apps Script
+## 2. Configurar o Gemini
 
-1. Crie ou abra a planilha que armazenará os dados.
-2. Em **Extensões → Apps Script**, cole `apps-script/Code.gs`.
-3. Execute `configurarPlanilhaInicial`.
-4. No log da execução, copie o valor exibido depois de `TOKEN DIMDIM:`.
-5. Abra **Configurações do projeto → Propriedades do script**.
-6. Adicione `GEMINI_API_KEY` com uma chave nova do Gemini.
-7. Crie uma implantação do tipo **App da Web**:
-   - executar como: você;
-   - acesso: qualquer pessoa.
-8. Copie a URL terminada em `/exec`.
-9. No DimDim, informe a URL e o token.
+```bash
+npx supabase login
+npx supabase link --project-ref SEU_PROJECT_REF
+npx supabase secrets set GEMINI_API_KEY=SUA_CHAVE_NOVA
+npx supabase functions deploy gemini
+```
 
-Se alterar o Apps Script, publique uma nova versão da implantação. Nunca publique
-o token no GitHub, em capturas de tela ou mensagens públicas.
-Também não coloque a chave do Gemini no frontend ou no repositório.
+Use uma chave nova. A chave antiga exposta no histórico do Git deve ser
+desativada no Google AI Studio.
 
-## Atualização do PWA
+## 3. Conectar o frontend
 
-O service worker usa cache versionado. Após uma publicação, feche e abra o
-aplicativo instalado. Se uma instalação muito antiga persistir, remova o atalho
-da tela inicial e instale novamente.
+Informe no primeiro acesso a Project URL e a chave pública `anon`/publishable.
+Alternativamente, defina os dois valores públicos em `js/config.js`. Não use a
+chave `service_role`.
+
+## 4. Publicar
+
+Em **Settings → Pages**, escolha **Deploy from a branch**, selecione `main` e
+`/ (root)`. Depois abra o aplicativo, crie a conta e confirme o e-mail.

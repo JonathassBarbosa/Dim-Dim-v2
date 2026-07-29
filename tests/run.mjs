@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import { escapeHTML, localDateTime } from '../js/dom.js';
 
@@ -17,6 +16,7 @@ const frontend = [
 ].join('\n');
 assert.doesNotMatch(frontend, /(?:AIza|AQ\.)[A-Za-z0-9._-]{20,}/, 'O frontend não pode conter chave de API.');
 assert.doesNotMatch(frontend, /generativelanguage\.googleapis\.com/, 'O frontend não deve chamar o Gemini diretamente.');
+assert.doesNotMatch(frontend, /script\.google\.com/, 'O frontend não deve depender do Apps Script.');
 const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]);
 assert.equal(new Set(ids).size, ids.length, 'O HTML não pode ter IDs duplicados.');
 
@@ -33,15 +33,21 @@ for (const asset of [
   assert.ok(fs.existsSync(new URL(asset, import.meta.url)), `Ativo ausente: ${asset}`);
 }
 
-const code = fs.readFileSync(new URL('../apps-script/Code.gs', import.meta.url), 'utf8');
-const sandbox = {
-  ContentService: {}, SpreadsheetApp: {}, PropertiesService: {},
-  Utilities: {}, LockService: {}, Logger: {}
-};
-vm.createContext(sandbox);
-vm.runInContext(code, sandbox);
-assert.deepEqual({ ...sandbox._dateParts('2026-07-28') }, { year: 2026, month: 7, day: 28 });
-assert.equal(sandbox._dateParts('28/07/2026'), null);
-assert.equal(sandbox._safeCell('=SUM(A:A)'), "'=SUM(A:A)");
+const schema = fs.readFileSync(new URL('../supabase/migrations/202607280001_initial_schema.sql', import.meta.url), 'utf8');
+for (const table of [
+  'profiles', 'accounts', 'credit_cards', 'credit_card_invoices', 'categories',
+  'transactions', 'transaction_items', 'installments', 'recurring_expenses',
+  'budgets', 'income_sources', 'investments', 'shopping_list_items', 'receipts',
+  'audit_logs', 'user_settings'
+]) {
+  assert.match(schema, new RegExp(`create table public\\.${table}\\b`), `Tabela ausente: ${table}`);
+  assert.match(schema, new RegExp(`alter table public\\.${table} enable row level security`), `RLS ausente: ${table}`);
+}
+assert.match(schema, /create policy "own rows only"/);
+assert.match(schema, /storage\.buckets/);
+
+const edgeFunction = fs.readFileSync(new URL('../supabase/functions/gemini/index.ts', import.meta.url), 'utf8');
+assert.match(edgeFunction, /Deno\.env\.get\('GEMINI_API_KEY'\)/);
+assert.doesNotMatch(edgeFunction, /AIza[A-Za-z0-9_-]{20,}/);
 
 console.log('DimDim: testes estáticos concluídos com sucesso.');
