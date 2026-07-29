@@ -13,3 +13,7 @@ export const GROUPS = ['Necessidade', 'Desejo', 'Investimento'];
 // pelo login e pelas políticas RLS do PostgreSQL, nunca ocultando a anon key.
 export const SUPABASE_URL = 'https://bpoyfqojlhztqprpndla.supabase.co';
 export const SUPABASE_ANON_KEY = 'sb_publishable_UIxdPTKyVTl5Cy9up7s3Zw_z2QMiWXT';
+
+// Chave pública Web Push. A chave privada correspondente fica somente nos
+// Secrets da Edge Function do Supabase.
+export const VAPID_PUBLIC_KEY = 'BHbbAI49ZHYN2Zj-3oLcQZ31fdiSbTJKC4ZkEqhaSJhbxFKvHvIso1rfrWe-AXUBG3dlyHzTXfuas9dshdKb-v0';
