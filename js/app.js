@@ -11,6 +11,7 @@ const api = new DimDimApi(BACKEND_URL, ANON_KEY);
 let catalog=loadJSON(LS.catalog,[]),lastLocation=null,selectedPayment=null,saldoVisivel=loadJSON(LS.saldoVisivel,true),lastHeroData=null;
 let investimentos=[];
 let aiMessages=[];
+let aiRequestPending=false;
 let aiVoiceOn=loadJSON(LS.aiVoice, false);
 let cats=[];
 let custos=[];
@@ -241,51 +242,6 @@ async function buscarContextoFinanceiro(){
   }catch(e){ return 'Não consegui buscar os dados financeiros agora.'; }
 }
 
-/* ===================== MOTOR LOCAL (WebLLM, roda no aparelho, sem internet) ===================== */
-const LOCAL_MODEL_ID = 'Llama-3.2-3B-Instruct-q4f16_1-MLC';
-let localEngine = null;
-let localEngineStatus = 'idle'; // idle | loading | ready | unavailable
-
-function webgpuDisponivel(){
-  return typeof navigator !== 'undefined' && !!navigator.gpu;
-}
-
-async function garantirEngineLocal(onProgress){
-  if(localEngineStatus === 'ready') return true;
-  if(localEngineStatus === 'unavailable') return false;
-  if(!webgpuDisponivel()){
-    console.warn('DimDim: este navegador/aparelho não suporta WebGPU. Usando a nuvem (Gemini).');
-    localEngineStatus = 'unavailable'; return false;
-  }
-  if(!window.WebLLM){
-    console.warn('DimDim: a biblioteca WebLLM não carregou (veja o erro acima, se houver). Usando a nuvem (Gemini).');
-    localEngineStatus = 'unavailable'; return false;
-  }
-  try{
-    localEngineStatus = 'loading';
-    localEngine = await window.WebLLM.CreateMLCEngine(LOCAL_MODEL_ID, {
-      initProgressCallback: (p)=>{ if(onProgress) onProgress(p); }
-    });
-    localEngineStatus = 'ready';
-    return true;
-  }catch(e){
-    console.error('DimDim: WebLLM carregou mas não conseguiu iniciar o modelo local:', e);
-    localEngineStatus = 'unavailable';
-    return false;
-  }
-}
-
-function precisaBuscarInternet(texto){
-  return /taxa|rentabilidade|\bcdi\b|\bselic\b|\bipca\b|cota[çc][ãa]o|atualiz|not[íi]cia|pre[çc]o atual|hoje em dia/i.test(texto);
-}
-
-function marcarOrigemLocal(bubbleEl){
-  const tag = document.createElement('div');
-  tag.style.cssText = 'font-size:10.5px;color:var(--soft);margin-top:5px;font-weight:600;';
-  tag.textContent = '🖥️ processado no seu aparelho, sem internet';
-  bubbleEl.appendChild(tag);
-}
-
 function processarRespostaTexto(textoResposta, origemLocal){
   const match = textoResposta.match(/```dimdim-config\s*([\s\S]*?)```/);
   const textoLimpo = textoResposta.replace(/```dimdim-config[\s\S]*?```/, '').trim();
@@ -298,63 +254,21 @@ function processarRespostaTexto(textoResposta, origemLocal){
   }
 }
 
-async function enviarParaLocalUI(texto){
-  aiMessages.push({role:'user', content:texto});
-  const thinking = renderAiBubble('thinking', 'Pensando (local, sem internet)...');
-  setBotThinking(true);
-  const contexto = await buscarContextoFinanceiro();
-  const systemPrompt = `Você é o assistente financeiro do app DimDim, conversando em português do Brasil, direto e amigável, respostas curtas. Contexto financeiro atual do usuário: ${contexto}
-Se o usuário estiver contando receita, custos fixos, gastos de cartão, dívidas ou investimentos, depois de entender o suficiente, responda normalmente E inclua ao final um bloco:
-\`\`\`dimdim-config
-{"proventos":[{"n":"Nome","v":1000}],"custosFixos":[{"n":"Nome","v":500}],"investimentos":[{"nome":"Nome","tipo":"Tipo","valor":1000,"taxa":10.5}]}
-\`\`\`
-Inclua só as chaves que fizerem sentido.`;
-  try{
-    const historico = [
-      {role:'system', content: systemPrompt},
-      ...aiMessages.map(m=>({role: m.role==='assistant' ? 'assistant' : 'user', content: m.content}))
-    ];
-    const resp = await localEngine.chat.completions.create({ messages: historico });
-    const textoResposta = (resp.choices && resp.choices[0] && resp.choices[0].message && resp.choices[0].message.content || '').trim() || 'Não consegui responder agora.';
-    thinking.remove();
-    setBotThinking(false);
-    processarRespostaTexto(textoResposta, true);
-  }catch(e){
-    console.error('Falha no motor local, caindo pro Gemini:', e);
-    thinking.remove();
-    setBotThinking(false);
-    aiMessages.pop();
-    await enviarParaGemini(texto);
-  }
-}
-
 async function enviarMensagemAi(texto){
   if(!texto.trim()) return;
+  if(aiRequestPending){toast('Aguarde a resposta atual.');return;}
   renderAiBubble('user', texto);
-
-  if(precisaBuscarInternet(texto)){
-    await enviarParaGemini(texto);
-    return;
-  }
-  if(localEngineStatus === 'unavailable'){
-    await enviarParaGemini(texto);
-    return;
-  }
-
-  const progresso = renderAiBubble('thinking', 'Preparando modelo local (só na primeira vez)...');
-  const localOk = await garantirEngineLocal((p)=>{
-    if(p && typeof p.progress === 'number'){
-      progresso.textContent = `Baixando modelo local... ${Math.round(p.progress*100)}%`;
-    } else if(p && p.text){
-      progresso.textContent = p.text;
-    }
-  });
-  progresso.remove();
-
-  if(localOk){
-    await enviarParaLocalUI(texto);
-  } else {
-    await enviarParaGemini(texto);
+  aiRequestPending=true;
+  const sendButton=document.getElementById('btnAiSend');
+  const input=document.getElementById('aiInput');
+  sendButton.disabled=true;
+  input.disabled=true;
+  try{await enviarParaGemini(texto);}
+  finally{
+    aiRequestPending=false;
+    sendButton.disabled=false;
+    input.disabled=false;
+    input.focus();
   }
 }
 
