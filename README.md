@@ -21,10 +21,13 @@ no Google Sheets, painel 50-30-20 e assistente financeiro.
 2. Abra **Extensões → Apps Script** e cole `apps-script/Code.gs`.
 3. Execute `configurarPlanilhaInicial`.
 4. Copie o token exibido no log de execução.
-5. Implante como Web App:
+5. Em **Configurações do projeto → Propriedades do script**, adicione:
+   - propriedade: `GEMINI_API_KEY`;
+   - valor: uma chave nova do Gemini.
+6. Implante como Web App:
    - executar como você;
    - acesso: qualquer pessoa.
-6. Abra o DimDim e informe a URL `/exec` e o token.
+7. Abra o DimDim e informe a URL `/exec` e o token.
 
 O aplicativo não possui mais uma planilha pessoal configurada por padrão. O token
 é armazenado apenas no navegador conectado e deve ser tratado como senha.
@@ -39,6 +42,7 @@ O aplicativo não possui mais uma planilha pessoal configurada por padrão. O to
 - Painel diário, mensal e anual, com filtro por mês **e ano**.
 - Datas gravadas no fuso `America/Sao_Paulo`.
 - Assistente local via WebLLM e alternativa Gemini.
+- Chamadas ao Gemini realizadas pelo backend, sem chave no navegador.
 
 ## Limites do modo offline
 
