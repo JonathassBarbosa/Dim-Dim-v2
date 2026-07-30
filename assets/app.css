@@ -287,6 +287,7 @@ textarea{min-height:56px;resize:vertical;}
 
 /* Open Finance Beta */
 .open-finance-sheet{padding-bottom:calc(28px + env(safe-area-inset-bottom));}
+.open-finance-back{border:0;background:var(--mint);color:var(--gd);border-radius:999px;padding:9px 13px;font-size:12px;font-weight:700;white-space:nowrap;}
 .open-finance-notice{background:var(--mint);color:var(--gd);border-radius:16px;padding:13px 14px;font-size:12px;line-height:1.55;margin-bottom:16px;}
 .open-finance-grid{display:grid;grid-template-columns:1fr 84px;gap:10px;}
 .field-hint{font-size:10.5px;color:var(--soft);margin:-7px 0 10px;}
