@@ -42,24 +42,60 @@
 <!-- BOAS-VINDAS / autenticação Supabase -->
 <div class="welcome" id="welcomeScreen">
   <img src="icons/mark.png" alt="">
-  <h1>Bem-vindo ao DimDim</h1>
-  <p>Entre para acessar seu banco PostgreSQL protegido.</p>
+  <h1 id="welcomeTitle">Bem-vindo ao DimDim</h1>
+  <p id="welcomeSubtitle">Entre com seu e-mail para acessar seus dados protegidos.</p>
+  <div id="authMainPanel">
+  <div class="auth-tabs" id="authTabs">
+    <button class="auth-tab active" type="button" data-auth-mode="login">Entrar</button>
+    <button class="auth-tab" type="button" data-auth-mode="signup">Criar conta</button>
+  </div>
   <div id="supabaseSetupFields">
     <label style="margin-top:0">URL do projeto Supabase</label>
     <input type="url" class="field" id="welcomeSupabaseUrl" placeholder="https://seu-projeto.supabase.co">
     <label>Chave pública (anon/publishable)</label>
     <input type="password" class="field" id="welcomeSupabaseKey" autocomplete="off" placeholder="Chave pública do projeto">
   </div>
-  <label style="margin-top:0">Nome (somente para criar uma conta)</label>
-  <input type="text" class="field" id="welcomeNameInput" autocomplete="name" placeholder="Seu nome">
+  <div id="welcomeSignupFields" hidden>
+    <label style="margin-top:0">Nome completo</label>
+    <input type="text" class="field" id="welcomeNameInput" autocomplete="name" placeholder="Seu nome completo">
+    <label>Telefone</label>
+    <input type="tel" class="field" id="welcomePhoneInput" autocomplete="tel" inputmode="tel" placeholder="(62) 99999-9999">
+  </div>
   <label>E-mail</label>
   <input type="email" class="field" id="welcomeEmailInput" autocomplete="email" placeholder="voce@email.com">
   <label>Senha</label>
   <input type="password" class="field" id="welcomePasswordInput" autocomplete="current-password" placeholder="Mínimo de 6 caracteres">
+  <div id="welcomeSignupPasswordFields" hidden>
+    <label>Confirme a senha</label>
+    <input type="password" class="field" id="welcomePasswordConfirm" autocomplete="new-password" placeholder="Digite a senha novamente">
+    <label class="auth-terms"><input type="checkbox" id="welcomeAcceptLegal"><span>Li e aceito os <a href="legal.html#termos" target="_blank" rel="noopener">Termos de Uso</a> e a <a href="legal.html#privacidade" target="_blank" rel="noopener">Política de Privacidade</a>.</span></label>
+  </div>
   <div class="welcome-status" id="welcomeStatus"></div>
-  <button class="btn" id="btnWelcomeLogin" style="margin-top:6px">Entrar</button>
-  <button class="btn gh" id="btnWelcomeSignup" style="margin-top:8px">Criar conta grátis</button>
-  <div class="welcome-steps">Se for seu primeiro acesso, crie a conta e confirme o e-mail, caso essa opção esteja ativada no Supabase.</div>
+  <button class="btn" id="btnWelcomeSubmit" type="button" style="margin-top:6px">Entrar</button>
+  <button class="auth-link" id="btnForgotPassword" type="button">Esqueci minha senha</button>
+  <div class="welcome-steps" id="welcomeHelp">Use o e-mail cadastrado. O telefone não é usado para login ou recuperação nesta versão gratuita.</div>
+  </div>
+
+  <div id="passwordRecoveryPanel" hidden>
+    <h2>Recuperar senha</h2>
+    <p>Informe o e-mail cadastrado. Enviaremos um link seguro para criar uma nova senha.</p>
+    <label>E-mail cadastrado</label>
+    <input type="email" class="field" id="recoveryEmailInput" autocomplete="email" placeholder="voce@email.com">
+    <div class="welcome-status" id="recoveryStatus"></div>
+    <button class="btn" id="btnSendRecovery" type="button">Enviar link de recuperação</button>
+    <button class="auth-link" id="btnBackToLogin" type="button">Voltar para o login</button>
+  </div>
+
+  <div id="newPasswordPanel" hidden>
+    <h2>Definir nova senha</h2>
+    <p>Crie uma nova senha com pelo menos 6 caracteres.</p>
+    <label>Nova senha</label>
+    <input type="password" class="field" id="newPasswordInput" autocomplete="new-password">
+    <label>Confirme a nova senha</label>
+    <input type="password" class="field" id="newPasswordConfirm" autocomplete="new-password">
+    <div class="welcome-status" id="newPasswordStatus"></div>
+    <button class="btn" id="btnSaveNewPassword" type="button">Salvar nova senha</button>
+  </div>
 </div>
 
 <!-- AGENTE DE IA -->
@@ -108,7 +144,7 @@
         <button id="btnOpenRegistro" type="button" aria-label="Configurações">⚙️</button>
       </div>
     </div>
-    <div class="hero-label">Saldo livre do mês</div>
+    <div class="hero-label" id="heroGreeting">Saldo livre do mês</div>
     <div class="hero-value" id="heroSaldo">R$ 0,00</div>
     <div class="hero-sub" id="heroSub">Conectando ao PostgreSQL</div>
   </div>

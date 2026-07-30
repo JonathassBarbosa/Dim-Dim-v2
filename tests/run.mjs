@@ -107,6 +107,13 @@ assert.match(openFinanceSchema, /create or replace function public\.open_finance
 
 const pluggyFrontend = fs.readFileSync(new URL('../js/open-finance.js', import.meta.url), 'utf8');
 assert.match(html, /cdn\.pluggy\.ai\/pluggy-connect/);
+assert.match(html, /data-auth-mode="login"/);
+assert.match(html, /data-auth-mode="signup"/);
+assert.match(html, /btnForgotPassword/);
+assert.match(frontend, /requestPasswordRecovery/);
+assert.match(frontend, /updatePasswordWithToken/);
+assert.match(frontend, /perfilUsuario/);
+assert.match(frontend, /Trate-o pelo primeiro nome/);
 assert.match(pluggyFrontend, /criarTokenPluggy/);
 assert.match(pluggyFrontend, /revogarItemPluggy/);
 assert.doesNotMatch(frontend + pluggyFrontend, /PLUGGY_CLIENT_SECRET|PLUGGY_WEBHOOK_SECRET/);

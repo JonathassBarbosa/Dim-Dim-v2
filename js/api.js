@@ -57,15 +57,54 @@ export class DimDimApi {
     return data;
   }
 
-  async signUp(email, password, name = '') {
+  async signUp(email, password, name = '', phone = '') {
     this.#assertConfigured();
     const data = await this.#request('/auth/v1/signup', {
       method: 'POST',
-      body: { email, password, data: { name } },
+      body: {
+        email,
+        password,
+        data: {
+          name,
+          phone,
+          terms_version: '2026-07-30',
+          privacy_version: '2026-07-30'
+        }
+      },
       auth: false
     });
     if (data.access_token) this.#saveSession(data);
     return data;
+  }
+
+  async requestPasswordRecovery(email, redirectTo) {
+    this.#assertConfigured();
+    return this.#request(`/auth/v1/recover?redirect_to=${encodeURIComponent(redirectTo)}`, {
+      method: 'POST',
+      body: { email },
+      auth: false
+    });
+  }
+
+  async updatePasswordWithToken(accessToken, password) {
+    this.#assertConfigured();
+    const response = await fetch(`${this.url}/auth/v1/user`, {
+      method: 'PUT',
+      headers: {
+        apikey: this.anonKey,
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ password }),
+      cache: 'no-store'
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(apiErrorMessage(data, response.status));
+    return data;
+  }
+
+  currentUser() {
+    return this.session?.user || null;
   }
 
   async signOut() {
@@ -115,6 +154,12 @@ export class DimDimApi {
         })
       ]);
       return { ok: true, profile: profiles[0] || null, connections };
+    }
+    if (action === 'perfilUsuario') {
+      const rows = await this.#table('profiles', {
+        query: 'select=name,phone&limit=1'
+      });
+      return { ok: true, profile: rows[0] || null };
     }
     if (action === 'lista') {
       const items = await this.#table('shopping_list_items', {
