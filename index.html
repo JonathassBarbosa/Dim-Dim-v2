@@ -321,9 +321,19 @@
     </div>
 
     <div class="open-finance-consents">
-      <label><input type="checkbox" id="ofAcceptTerms"> Aceito os Termos de Uso do DimDim.</label>
-      <label><input type="checkbox" id="ofAcceptPrivacy"> Li e aceito a Política de Privacidade.</label>
-      <label><input type="checkbox" id="ofAcceptBeta"> Autorizo a conexão beta e o tratamento dos dados financeiros escolhidos por mim.</label>
+      <div class="consent-row">
+        <label><input type="checkbox" id="ofAcceptTerms"><span>Aceito os Termos de Uso do DimDim.</span></label>
+        <a href="legal.html#termos" target="_blank" rel="noopener">Ler termos</a>
+      </div>
+      <div class="consent-row">
+        <label><input type="checkbox" id="ofAcceptPrivacy"><span>Li e aceito a Política de Privacidade.</span></label>
+        <a href="legal.html#privacidade" target="_blank" rel="noopener">Ler política</a>
+      </div>
+      <div class="consent-row">
+        <label><input type="checkbox" id="ofAcceptBeta"><span>Autorizo a conexão beta e o tratamento dos dados financeiros escolhidos por mim.</span></label>
+        <a href="legal.html#open-finance" target="_blank" rel="noopener">Ver autorização</a>
+      </div>
+      <p class="consent-hint">Os documentos podem ser lidos e salvos em PDF antes do aceite. Nenhuma opção vem marcada.</p>
     </div>
     <button class="btn gh" id="btnSaveOpenFinanceProfile" type="button">Salvar cadastro</button>
 

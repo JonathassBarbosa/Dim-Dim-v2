@@ -1,6 +1,6 @@
-const CACHE = 'dimdim-v16-open-finance';
+const CACHE = 'dimdim-v17-legal-documents';
 const ASSETS = [
-  './', './index.html', './manifest.json', './assets/app.css', './assets/dimdim-logo.svg',
+  './', './index.html', './legal.html', './manifest.json', './assets/app.css', './assets/dimdim-logo.svg',
   './js/app.js', './js/api.js', './js/config.js', './js/dom.js', './js/storage.js',
   './js/notifications.js', './js/open-finance.js',
   './icons/icon-192.png', './icons/icon-512.png', './icons/mark.png',
