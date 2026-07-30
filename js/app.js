@@ -19,9 +19,13 @@ let aiVoiceOn=loadJSON(LS.aiVoice, false);
 let cats=[];
 let custos=[];
 let proventos=[];
+let currentUserName=String(api.currentUser()?.user_metadata?.name||'').trim();
 function uid(){return globalThis.crypto?.randomUUID?.() || ('i'+Math.random().toString(36).slice(2,10));}
 function money(n){return'R$ '+(Number(n)||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});}
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2400);}
+function firstName(name){return String(name||'').trim().split(/\s+/)[0]||'';}
+function applyUserName(name){currentUserName=String(name||'').trim();const shortName=firstName(currentUserName);document.getElementById('heroGreeting').textContent=shortName?`Olá, ${shortName} · saldo livre do mês`:'Saldo livre do mês';}
+async function loadUserIdentity(){if(!api.isAuthenticated()){applyUserName('');return;}try{const data=await api.get('perfilUsuario');applyUserName(data.profile?.name||api.currentUser()?.user_metadata?.name||'');}catch{applyUserName(api.currentUser()?.user_metadata?.name||'');}}
 const notificationCenter=createNotificationCenter({api,money,toast,vapidPublicKey:VAPID_PUBLIC_KEY});
 const openFinance=createOpenFinance({api,toast});
 notificationCenter.init();
@@ -157,14 +161,55 @@ refreshHero();
 setTimeout(()=>{testConnection();},2400);
 
 /* ===================== AUTENTICAÇÃO SUPABASE ===================== */
-async function autenticarWelcome(createAccount = false){
+let welcomeMode='login';
+let recoveryAccessToken='';
+function showAuthMain(show){document.getElementById('authMainPanel').hidden=!show;}
+function setWelcomeMode(mode){
+  welcomeMode=mode;
+  const signup=mode==='signup';
+  document.querySelectorAll('[data-auth-mode]').forEach(button=>button.classList.toggle('active',button.dataset.authMode===mode));
+  document.getElementById('welcomeSignupFields').hidden=!signup;
+  document.getElementById('welcomeSignupPasswordFields').hidden=!signup;
+  document.getElementById('btnForgotPassword').hidden=signup;
+  document.getElementById('btnWelcomeSubmit').textContent=signup?'Criar minha conta':'Entrar';
+  document.getElementById('welcomeTitle').textContent=signup?'Crie sua conta':'Bem-vindo ao DimDim';
+  document.getElementById('welcomeSubtitle').textContent=signup?'Cadastre seus dados para começar a organizar sua vida financeira.':'Entre com seu e-mail para acessar seus dados protegidos.';
+  document.getElementById('welcomePasswordInput').autocomplete=signup?'new-password':'current-password';
+  document.getElementById('welcomeStatus').textContent='';
+}
+function showRecoveryPanel(show){
+  showAuthMain(!show);
+  document.getElementById('passwordRecoveryPanel').hidden=!show;
+  document.getElementById('newPasswordPanel').hidden=true;
+  document.getElementById('welcomeTitle').textContent=show?'Recupere sua conta':'Bem-vindo ao DimDim';
+  document.getElementById('welcomeSubtitle').textContent=show?'A recuperação será enviada somente ao e-mail cadastrado.':'Entre com seu e-mail para acessar seus dados protegidos.';
+}
+function showNewPasswordPanel(token){
+  recoveryAccessToken=token;
+  showAuthMain(false);
+  document.getElementById('passwordRecoveryPanel').hidden=true;
+  document.getElementById('newPasswordPanel').hidden=false;
+  document.getElementById('welcomeTitle').textContent='Crie uma nova senha';
+  document.getElementById('welcomeSubtitle').textContent='O link de recuperação foi validado.';
+  document.getElementById('welcomeScreen').classList.add('show');
+}
+async function autenticarWelcome(){
+  const createAccount=welcomeMode==='signup';
   const setupUrl = document.getElementById('welcomeSupabaseUrl').value.trim();
   const setupKey = document.getElementById('welcomeSupabaseKey').value.trim();
   const name = document.getElementById('welcomeNameInput').value.trim();
+  const phone = document.getElementById('welcomePhoneInput').value.trim();
   const email = document.getElementById('welcomeEmailInput').value.trim();
   const password = document.getElementById('welcomePasswordInput').value;
   const status = document.getElementById('welcomeStatus');
   if(!email || password.length < 6){ status.innerHTML='<span style="color:var(--red)">Informe o e-mail e uma senha com pelo menos 6 caracteres.</span>'; return; }
+  if(createAccount){
+    const normalizedPhone=phone.replace(/\D/g,'');
+    if(name.split(/\s+/).filter(Boolean).length<2){status.innerHTML='<span style="color:var(--red)">Informe seu nome completo.</span>';return;}
+    if(normalizedPhone.length<10||normalizedPhone.length>13){status.innerHTML='<span style="color:var(--red)">Informe um telefone válido com DDD.</span>';return;}
+    if(password!==document.getElementById('welcomePasswordConfirm').value){status.innerHTML='<span style="color:var(--red)">As senhas não são iguais.</span>';return;}
+    if(!document.getElementById('welcomeAcceptLegal').checked){status.innerHTML='<span style="color:var(--red)">Leia e aceite os Termos de Uso e a Política de Privacidade.</span>';return;}
+  }
   status.innerHTML = createAccount ? '🔄 Criando conta...' : '🔄 Entrando...';
   try{
     if(setupUrl || setupKey){
@@ -172,12 +217,13 @@ async function autenticarWelcome(createAccount = false){
       BACKEND_URL=setupUrl;ANON_KEY=setupKey;api.configure(BACKEND_URL,ANON_KEY);
       saveJSON(LS.supabaseUrl,BACKEND_URL);saveJSON(LS.supabaseAnonKey,ANON_KEY);
     }
-    const data = createAccount ? await api.signUp(email,password,name) : await api.signIn(email,password);
+    const data = createAccount ? await api.signUp(email,password,name,phone) : await api.signIn(email,password);
     if(!data.access_token){
       status.innerHTML='<span style="color:var(--gd)">Conta criada. Confirme o e-mail e depois entre.</span>';
       return;
     }
     document.getElementById('welcomeScreen').classList.remove('show');
+    await loadUserIdentity();
     toast('Conta conectada!');
     await Promise.all([testConnection(),loadCatalog(),refreshHero(),notificationCenter.refresh()]);
     if(createAccount) openFinance.open();
@@ -185,12 +231,42 @@ async function autenticarWelcome(createAccount = false){
     status.innerHTML = `<span style="color:var(--red)">${escapeHTML(e.message)}</span>`;
   }
 }
-document.getElementById('btnWelcomeLogin').addEventListener('click',()=>autenticarWelcome(false));
-document.getElementById('btnWelcomeSignup').addEventListener('click',()=>autenticarWelcome(true));
-document.getElementById('btnLogout').addEventListener('click',async()=>{await api.signOut();document.getElementById('registroOverlay').classList.remove('open');document.getElementById('welcomeScreen').classList.add('show');await notificationCenter.refresh({generate:false});toast('Sessão encerrada.');});
+document.querySelectorAll('[data-auth-mode]').forEach(button=>button.addEventListener('click',()=>setWelcomeMode(button.dataset.authMode)));
+document.getElementById('btnWelcomeSubmit').addEventListener('click',autenticarWelcome);
+document.getElementById('btnForgotPassword').addEventListener('click',()=>{document.getElementById('recoveryEmailInput').value=document.getElementById('welcomeEmailInput').value.trim();showRecoveryPanel(true);});
+document.getElementById('btnBackToLogin').addEventListener('click',()=>{showRecoveryPanel(false);setWelcomeMode('login');});
+document.getElementById('btnSendRecovery').addEventListener('click',async event=>{
+  const email=document.getElementById('recoveryEmailInput').value.trim();
+  const status=document.getElementById('recoveryStatus');
+  if(!email){status.innerHTML='<span style="color:var(--red)">Informe o e-mail cadastrado.</span>';return;}
+  event.currentTarget.disabled=true;status.textContent='🔄 Enviando...';
+  try{await api.requestPasswordRecovery(email,`${location.origin}${location.pathname}`);status.innerHTML='<span style="color:var(--gd)">Se o e-mail estiver cadastrado, você receberá um link para criar uma nova senha.</span>';}
+  catch(error){status.innerHTML=`<span style="color:var(--red)">${escapeHTML(error.message)}</span>`;}
+  finally{event.currentTarget.disabled=false;}
+});
+document.getElementById('btnSaveNewPassword').addEventListener('click',async event=>{
+  const password=document.getElementById('newPasswordInput').value;
+  const status=document.getElementById('newPasswordStatus');
+  if(password.length<6){status.innerHTML='<span style="color:var(--red)">Use pelo menos 6 caracteres.</span>';return;}
+  if(password!==document.getElementById('newPasswordConfirm').value){status.innerHTML='<span style="color:var(--red)">As senhas não são iguais.</span>';return;}
+  event.currentTarget.disabled=true;
+  try{
+    await api.updatePasswordWithToken(recoveryAccessToken,password);
+    history.replaceState(null,'',location.pathname+location.search);
+    recoveryAccessToken='';
+    document.getElementById('newPasswordPanel').hidden=true;
+    showAuthMain(true);setWelcomeMode('login');
+    document.getElementById('welcomeStatus').innerHTML='<span style="color:var(--gd)">Senha alterada. Entre com sua nova senha.</span>';
+  }catch(error){status.innerHTML=`<span style="color:var(--red)">${escapeHTML(error.message)}</span>`;}
+  finally{event.currentTarget.disabled=false;}
+});
+document.getElementById('btnLogout').addEventListener('click',async()=>{await api.signOut();applyUserName('');document.getElementById('registroOverlay').classList.remove('open');document.getElementById('welcomeScreen').classList.add('show');showAuthMain(true);setWelcomeMode('login');await notificationCenter.refresh({generate:false});toast('Sessão encerrada.');});
 if(!api.isAuthenticated()){ document.getElementById('welcomeScreen').classList.add('show'); }
-else { loadCatalog(); notificationCenter.refresh(); }
+else { loadUserIdentity(); loadCatalog(); notificationCenter.refresh(); }
 if(api.isConfigured()){document.getElementById('supabaseSetupFields').style.display='none';}
+const recoveryParams=new URLSearchParams(location.hash.replace(/^#/,''));
+if(recoveryParams.get('type')==='recovery'&&recoveryParams.get('access_token'))showNewPasswordPanel(recoveryParams.get('access_token'));
+else setWelcomeMode('login');
 
 /* ===================== AGENTE DE IA (texto, voz e onboarding) ===================== */
 function openAi(){ document.getElementById('aiOverlay').classList.add('open'); document.getElementById('aiInput').focus(); }
@@ -326,7 +402,8 @@ async function enviarParaGemini(texto){
   setBotThinking(true);
 
   const contexto = await buscarContextoFinanceiro();
-  const systemPrompt = `Você é o assistente financeiro do app DimDim, conversando em português do Brasil, direto e amigável, respostas curtas (poucos parágrafos). Os valores do contexto abaixo foram calculados pelo PostgreSQL: use-os como fonte de verdade, não refaça as contas e não invente valores ausentes. Contexto financeiro atual do usuário: ${contexto}
+  const userIdentity=currentUserName?`O nome cadastrado do usuário é "${currentUserName}". Trate-o pelo primeiro nome com naturalidade, sem repetir o nome em toda resposta.`:'O usuário ainda não informou um nome.';
+  const systemPrompt = `Você é o assistente financeiro do app DimDim, conversando em português do Brasil, direto e amigável, respostas curtas (poucos parágrafos). ${userIdentity} Os valores do contexto abaixo foram calculados pelo PostgreSQL: use-os como fonte de verdade, não refaça as contas e não invente valores ausentes. Contexto financeiro atual do usuário: ${contexto}
 Se o usuário estiver te contando receita, custos fixos, gastos de cartão, dívidas ou investimentos (onboarding inicial), depois de entender o suficiente, responda normalmente E inclua ao final um bloco de código no formato:
 \`\`\`dimdim-config
 {"proventos":[{"n":"Nome","v":1000}],"custosFixos":[{"n":"Nome","v":500}],"investimentos":[{"nome":"Nome","tipo":"Tipo","valor":1000,"taxa":10.5}],"metas":[{"nome":"Reserva de emergência","objetivo":10000,"atual":1000,"mensal":500,"data":"2027-12-31"}]}
