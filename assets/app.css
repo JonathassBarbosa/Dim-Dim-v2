@@ -230,6 +230,14 @@ textarea{min-height:56px;resize:vertical;}
 .welcome .field{margin-bottom:12px;}
 .welcome-status{font-size:13px;margin-bottom:8px;min-height:18px;}
 .welcome-steps{font-size:12px;color:var(--soft);background:var(--mint);border-radius:14px;padding:12px 14px;margin-top:18px;line-height:1.6;}
+.auth-tabs{display:grid;grid-template-columns:1fr 1fr;background:var(--mint);border-radius:14px;padding:4px;margin-bottom:18px;}
+.auth-tab{border:0;background:transparent;color:var(--soft);border-radius:11px;padding:11px;font-weight:700;}
+.auth-tab.active{background:#fff;color:var(--gd);box-shadow:0 2px 8px rgba(16,36,26,.08);}
+.auth-link{border:0;background:transparent;color:var(--g);font-weight:700;padding:13px 8px;text-decoration:underline;text-underline-offset:2px;}
+.auth-terms{display:flex;align-items:flex-start;gap:9px;font-size:12px;line-height:1.5;margin:5px 0 14px;}
+.auth-terms input{margin-top:3px;accent-color:var(--g);}
+.auth-terms a{color:var(--g);font-weight:700;}
+#passwordRecoveryPanel,#newPasswordPanel{border-top:1px solid #dceae3;margin-top:18px;padding-top:18px;}
 
 /* FAB do agente de IA */
 .ai-fab{position:fixed;right:16px;bottom:calc(84px + env(safe-area-inset-bottom));width:60px;height:60px;border-radius:50%;border:none;padding:6px;box-shadow:0 8px 22px rgba(16,36,26,.28);z-index:95;background:#fff;}
