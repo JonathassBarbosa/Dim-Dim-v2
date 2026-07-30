@@ -1,4 +1,4 @@
-const CACHE = 'dimdim-v19-open-finance-back';
+const CACHE = 'dimdim-v20-custom-domain';
 const ASSETS = [
   './', './index.html', './legal.html', './manifest.json', './assets/app.css', './assets/dimdim-logo.svg',
   './js/app.js', './js/api.js', './js/config.js', './js/dom.js', './js/storage.js',
