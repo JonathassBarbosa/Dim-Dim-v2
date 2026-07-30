@@ -7,7 +7,7 @@
 3. Execute `supabase/migrations/202607280001_initial_schema.sql`.
 4. Execute `supabase/migrations/202607290001_notifications.sql`.
 5. Em **Authentication → URL Configuration**, use como Site URL e Redirect URL:
-   `https://jonathassbarbosa.github.io/Dim-Dim-v2/`.
+   `https://dimdim.smartservices.com.br/`.
 
 ## 2. Configurar o Gemini
 

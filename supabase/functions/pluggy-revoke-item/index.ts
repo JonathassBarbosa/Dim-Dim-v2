@@ -2,7 +2,8 @@ const PLUGGY_API = 'https://api.pluggy.ai';
 
 function responseHeaders(request: Request) {
   const origin = request.headers.get('origin') || 'https://jonathassbarbosa.github.io';
-  const allowed = origin === 'https://jonathassbarbosa.github.io' || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+  const allowed = ['https://jonathassbarbosa.github.io', 'https://dimdim.smartservices.com.br'].includes(origin)
+    || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
   return {
     'Access-Control-Allow-Origin': allowed ? origin : 'https://jonathassbarbosa.github.io',
     'Access-Control-Allow-Headers': 'authorization, apikey, content-type',

@@ -51,7 +51,7 @@ pela Pluggy; sua URL recebe um token secreto gerado no backend.
 
 Cadastre esta URL de retorno OAuth:
 
-`https://jonathassbarbosa.github.io/Dim-Dim-v2/?pluggy=return`
+`https://dimdim.smartservices.com.br/?pluggy=return`
 
 O webhook por conexão é definido automaticamente quando o DimDim cria o Connect
 Token. Se também configurar um webhook global no painel da Pluggy, evite

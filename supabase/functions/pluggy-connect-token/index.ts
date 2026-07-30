@@ -1,6 +1,7 @@
 const PLUGGY_API = 'https://api.pluggy.ai';
 const ALLOWED_ORIGINS = new Set([
   'https://jonathassbarbosa.github.io',
+  'https://dimdim.smartservices.com.br',
   'http://localhost:8080',
   'http://localhost:5500',
   'http://127.0.0.1:5500'
@@ -67,7 +68,7 @@ Deno.serve(async (request) => {
         options: {
           clientUserId: user.id,
           webhookUrl: `${supabaseUrl}/functions/v1/pluggy-webhook?token=${encodeURIComponent(webhookSecret)}`,
-          oauthRedirectUri: 'https://jonathassbarbosa.github.io/Dim-Dim-v2/?pluggy=return',
+          oauthRedirectUri: 'https://dimdim.smartservices.com.br/?pluggy=return',
           avoidDuplicates: true
         }
       })
